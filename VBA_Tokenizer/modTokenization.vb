@@ -1,7 +1,7 @@
 ﻿Imports System.Text.RegularExpressions
 Imports System.Text
-Imports AVACONT_Core.modTypes
-Imports AVACONT_Core
+Imports VBA_CORE.modTypes
+Imports VBA_CORE
 
 Public Module Tokenizer
 

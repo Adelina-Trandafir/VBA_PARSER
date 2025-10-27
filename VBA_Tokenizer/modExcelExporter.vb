@@ -2,9 +2,9 @@
 Imports System.ComponentModel
 Imports System.IO
 Imports System.Text
-Imports AVACONT_Core.modTypes
-Imports AVACONT_INFO
-Imports AVACONT_Core.Logger
+Imports VBA_CORE.modTypes
+Imports VBA_CORE
+Imports VBA_CORE.Logger
 Imports OfficeOpenXml
 Imports OfficeOpenXml.Style
 

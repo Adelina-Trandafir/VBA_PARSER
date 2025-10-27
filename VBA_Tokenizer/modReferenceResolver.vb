@@ -1,9 +1,9 @@
 ﻿'Imports System.Collections.Concurrent
 'Imports System.IO
 'Imports System.Text.RegularExpressions
-'Imports AVACONT_Core.modTypes
-'Imports AVACONT_Core
-'Imports AVACONT_Core.Logger
+'Imports VBA_CORE.modTypes
+'Imports VBA_CORE
+'Imports VBA_CORE.Logger
 
 'Public Module modReferenceResolver
 

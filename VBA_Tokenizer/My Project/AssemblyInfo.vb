@@ -8,9 +8,9 @@ Imports System.Runtime.InteropServices
 
 ' Review the values of the assembly attributes
 
-<Assembly: AssemblyTitle("AVACONT_INFO")>
-<Assembly: AssemblyDescription("")>
-<Assembly: AssemblyCompany("")>
+<Assembly: AssemblyTitle("VBA_TOKENIZER")>
+<Assembly: AssemblyDescription("Prelucreaza fisiere VBA")>
+<Assembly: AssemblyCompany("AVATAR SOFT")>
 <Assembly: AssemblyProduct("AVACONT_INFO")>
 <Assembly: AssemblyCopyright("Copyright ©  2025")>
 <Assembly: AssemblyTrademark("")>

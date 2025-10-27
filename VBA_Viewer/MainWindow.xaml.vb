@@ -1,11 +1,11 @@
 ﻿Imports System.Text
 Imports System.Windows
 Imports System.Windows.Controls
-Imports AVACONT_Core
-Imports AVACONT_Core.Logger
-Imports AVACONT_Core.modTypes
+Imports VBA_CORE
+Imports VBA_CORE.Logger
+Imports VBA_CORE.modTypes
 
-Namespace AVACONT_Viewer
+Namespace VBA_VIEWER
     Partial Public Class MainWindow
         Inherits Window
 
@@ -568,6 +568,31 @@ Namespace AVACONT_Viewer
                     Next
                 End If
             Next
+        End Sub
+
+        Private Sub BtnBack_Click(sender As Object, e As RoutedEventArgs)
+            Try
+                ' Confirmare (opțional)
+                If MessageBox.Show("Sigur vrei să revii la fereastra cu opțiuni?",
+                                   "Confirmare",
+                                   MessageBoxButton.YesNo,
+                                   MessageBoxImage.Question) = MessageBoxResult.No Then Exit Sub
+
+                ' Caută fereastra de launcher stocată în Tag
+                Dim launcher = TryCast(Me.Tag, Window)
+                If launcher IsNot Nothing Then
+                    launcher.Show()
+                End If
+
+                ' Închide viewerul
+                Me.Close()
+
+            Catch ex As Exception
+                MessageBox.Show("Eroare la revenirea la opțiuni: " & ex.Message,
+                                "Eroare",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Error)
+            End Try
         End Sub
 
     End Class

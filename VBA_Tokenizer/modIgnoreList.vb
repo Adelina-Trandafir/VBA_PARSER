@@ -1,5 +1,5 @@
 ﻿Imports System.Text.RegularExpressions
-Imports AVACONT_Core.modTypes
+Imports VBA_CORE.modTypes
 
 Public Module VBAIgnoreList
 

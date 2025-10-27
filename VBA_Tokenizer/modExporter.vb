@@ -3,9 +3,10 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
-Imports AVACONT_INFO
-Imports AVACONT_Core.modTypes
-Imports AVACONT_Core.Logger
+Imports VBA_CORE
+Imports VBA_CORE.modTypes
+Imports VBA_CORE.Logger
+Imports VBA_CORE.VBA_CORE
 
 Public Module modExporter
     Private errorFiles As New List(Of String)
@@ -16,12 +17,12 @@ Public Module modExporter
     Public Sub ExportAccess() '(exported As List(Of ExportedModule))
         Dim sw As Stopwatch = Stopwatch.StartNew()
         LogInfo("=== Export Access VBA ===")
-        Directory.CreateDirectory(EXPORT_DIR)
+        Directory.CreateDirectory(modGlobals.Global_ExportDir)
 
         Dim app As Microsoft.Office.Interop.Access.Application = Nothing
         Try
             app = New Microsoft.Office.Interop.Access.Application()
-            app.OpenCurrentDatabase(DB_PATH)
+            app.OpenCurrentDatabase(modGlobals.Global_DBPath)
             LogInfo("Deschis baza de date Access...")
 
             Dim folders As New Dictionary(Of String, AcObjectType) From {
@@ -32,7 +33,7 @@ Public Module modExporter
             }
 
             For Each kvp In folders
-                Dim folder = Path.Combine(EXPORT_DIR, kvp.Key)
+                Dim folder = Path.Combine(modGlobals.Global_ExportDir, kvp.Key)
                 Directory.CreateDirectory(folder)
                 Dim objs As Object = Nothing
                 Try

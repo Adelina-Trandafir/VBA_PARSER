@@ -2,11 +2,12 @@
 Imports System.IO.Compression
 Imports System.Runtime.Serialization.Formatters.Binary
 Imports System.Threading
-Imports AVACONT_Core.Logger
-Imports AVACONT_Core.modTypes
+Imports VBA_CORE.Logger
+Imports VBA_CORE.modTypes
+Imports VBA_CORE.VBA_CORE
 
 Public Module modSerializer
-    Private ReadOnly CACHE_FILE As String = Path.Combine(EXPORT_DIR, "cache.dat")
+    Private ReadOnly CACHE_FILE As String = Path.Combine(modGlobals.Global_ExportDir, "cache.dat")
 
     <Serializable>
     Public Class ProjectCache
@@ -58,43 +59,37 @@ Public Module modSerializer
             LogInfo("📂 Încarc cache binar...")
 
             Dim cache As ProjectCache
-            Dim totalSize As Long = New FileInfo(CACHE_FILE).Length
             Dim cancelToken As Boolean = False
             Dim spinnerChars As Char() = {"|", "/", "-", "\"}
             Dim spinIndex As Integer = 0
+            Dim lastPct As Integer = -1
+            Dim isConsole As Boolean = Environment.UserInteractive AndAlso Not Console.IsOutputRedirected
 
             Using fs As New FileStream(CACHE_FILE, FileMode.Open, FileAccess.Read, FileShare.Read)
                 Using gz As New GZipStream(fs, CompressionMode.Decompress)
                     Dim bf As New BinaryFormatter()
 
-                    ' === Thread paralel pentru progres dinamic în consolă ===
-                    ' === Thread paralel pentru progres animat (smart detect) ===
+                    ' === Thread separat pentru progres ===
                     Dim progressTask As Task = Task.Run(Sub()
-                                                            Dim useRealConsole As Boolean = Not Console.IsOutputRedirected
                                                             Dim dots As Integer = 0
-                                                            Dim spinChars As Char() = {"|", "/", "-", "\"}
-                                                            'Dim spinIndex As Integer = 0
-                                                            Dim lastPct As Integer = -1
-
                                                             While Not cancelToken
                                                                 Try
                                                                     Dim pct As Double = 0
                                                                     If fs.Length > 0 Then
                                                                         pct = (fs.Position / fs.Length) * 100
                                                                     End If
-                                                                    Dim curPct As Integer = CInt(Math.Min(100, Math.Round(pct)))
 
-                                                                    ' doar dacă s-a schimbat cu cel puțin 1%
+                                                                    Dim curPct As Integer = CInt(Math.Min(100, Math.Round(pct)))
                                                                     If curPct <> lastPct Then
                                                                         lastPct = curPct
 
-                                                                        If useRealConsole Then
-                                                                            ' --- Consolă reală: animare cu spinner și rescriere pe aceeași linie ---
-                                                                            Dim spinner As Char = spinChars(spinIndex Mod spinChars.Length)
+                                                                        If isConsole Then
+                                                                            ' Consolă reală: animăm în aceeași linie
+                                                                            Dim spinner As Char = spinnerChars(spinIndex Mod spinnerChars.Length)
                                                                             spinIndex += 1
-                                                                            Console.Write($"\r   {spinner} Deserializare cache: {curPct,3}% complet")
+                                                                            Console.Write(vbCr & $"   {spinner} Deserializare cache: {curPct,3}% complet   ")
                                                                         Else
-                                                                            ' --- Mediul non-console (WPF/VS Output): animare cu puncte ---
+                                                                            ' Fallback pentru VS Output / PowerShell
                                                                             dots = (dots + 1) Mod 4
                                                                             Dim anim = New String("."c, dots)
                                                                             LogInfo($"   Deserializare cache{anim} {curPct,3}% complet")
@@ -105,12 +100,11 @@ Public Module modSerializer
                                                                 Thread.Sleep(120)
                                                             End While
 
-                                                            ' finalizează linia în consolă, dacă era reală
-                                                            If useRealConsole Then
-                                                                Console.Write(vbCrLf)
+                                                            ' finalizează linia dacă e consolă
+                                                            If isConsole Then
+                                                                Console.Write(vbCr & "   ✅ Deserializare completă!                     " & vbCrLf)
                                                             End If
                                                         End Sub)
-
 
 #Disable Warning SYSLIB0011
                     cache = CType(bf.Deserialize(gz), ProjectCache)
@@ -118,9 +112,6 @@ Public Module modSerializer
 
                     cancelToken = True
                     progressTask.Wait()
-
-                    ' Curăță linia și afișează finalul
-                    Console.Write(vbCr & "   ✅ Deserializare completă!                     " & vbCrLf)
                 End Using
             End Using
 
@@ -158,11 +149,9 @@ Public Module modSerializer
         End Try
     End Function
 
-
-
     Private Function GetSourceHash() As String
         Try
-            Dim fi As New FileInfo(DB_PATH)
+            Dim fi As New FileInfo(modGlobals.Global_DBPath)
             Return $"{fi.Length}_{fi.LastWriteTimeUtc.Ticks}"
         Catch
             Return ""

@@ -2,9 +2,10 @@
 Imports System.Collections.Concurrent
 Imports System.Text
 Imports System.Text.RegularExpressions
-Imports AVACONT_Core
-Imports AVACONT_Core.modTypes
-Imports AVACONT_Core.Logger
+Imports VBA_CORE
+Imports VBA_CORE.Logger
+Imports VBA_CORE.modTypes
+Imports VBA_CORE.VBA_CORE
 
 Public Module modCodeParser
     ' ==============================================================
@@ -32,7 +33,7 @@ Public Module modCodeParser
 
         Dim runner As Action =
             Sub()
-                If useParallel Then
+                If modGlobals.Global_UseParallel Then
                     Parallel.ForEach(sources, opts, Sub(src) ParseSingleCodeBlock(src.Name, src.Type, src.Code, src.FCI))
                 Else
                     For Each src In sources

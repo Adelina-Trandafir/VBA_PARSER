@@ -1,8 +1,8 @@
 ﻿'Imports System.IO
 'Imports System.Text
 'Imports System.Web.Script.Serialization
-'Imports AVACONT_Core.modTypes
-'Imports AVACONT_Core.Logger
+'Imports VBA_CORE.modTypes
+'Imports VBA_CORE.Logger
 
 'Public Module modReports
 

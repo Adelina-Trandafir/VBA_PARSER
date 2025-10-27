@@ -6,8 +6,8 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{2FE3B1D8-0849-477D-8D86-173CC4E72BFC}</ProjectGuid>
     <OutputType>Library</OutputType>
-    <RootNamespace>AVACONT_Core</RootNamespace>
-    <AssemblyName>AVACONT_Core</AssemblyName>
+    <RootNamespace>VBA_CORE</RootNamespace>
+    <AssemblyName>VBA_CORE</AssemblyName>
     <FileAlignment>512</FileAlignment>
     <MyType>Windows</MyType>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
@@ -19,7 +19,7 @@
     <DefineDebug>true</DefineDebug>
     <DefineTrace>true</DefineTrace>
     <OutputPath>bin\Debug\</OutputPath>
-    <DocumentationFile>AVACONT_Core.xml</DocumentationFile>
+    <DocumentationFile>VBA_CORE.xml</DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -28,7 +28,7 @@
     <DefineTrace>true</DefineTrace>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
-    <DocumentationFile>AVACONT_Core.xml</DocumentationFile>
+    <DocumentationFile>VBA_CORE.xml</DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
@@ -65,12 +65,14 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Logger.vb" />
+    <Compile Include="modGlobals.vb" />
     <Compile Include="modRegexHelper.vb" />
     <Compile Include="modTypes.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">
       <AutoGen>True</AutoGen>
       <DependentUpon>Application.myapp</DependentUpon>
+      <DesignTime>True</DesignTime>
     </Compile>
     <Compile Include="My Project\Resources.Designer.vb">
       <AutoGen>True</AutoGen>

@@ -1,5 +1,5 @@
-﻿'Imports AVACONT_Core
-'Imports AVACONT_Core.Logger
+﻿'Imports VBA_CORE
+'Imports VBA_CORE.Logger
 
 'Module Analizer_Classifier
 '    ' ==============================================================

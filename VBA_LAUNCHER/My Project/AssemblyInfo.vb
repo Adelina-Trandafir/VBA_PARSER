@@ -11,10 +11,10 @@ Imports System.Windows
 
 ' Review the values of the assembly attributes
 
-<Assembly: AssemblyTitle("VBA_VIEWER")>
+<Assembly: AssemblyTitle("VBA_LAUNCHER")>
 <Assembly: AssemblyDescription("")>
 <Assembly: AssemblyCompany("")>
-<Assembly: AssemblyProduct("AVACONT_Viewer")>
+<Assembly: AssemblyProduct("VBA_LAUNCHER")>
 <Assembly: AssemblyCopyright("Copyright ©  2025")>
 <Assembly: AssemblyTrademark("")>
 <Assembly: ComVisible(false)>
@@ -42,7 +42,7 @@ Imports System.Windows
 
 
 'The following GUID is for the ID of the typelib if this project is exposed to COM
-<Assembly: Guid("44ee2249-14e6-4f93-8c0b-7e0fdc979d49")>
+<Assembly: Guid("5cf7050b-f95f-485d-8c94-99772053a3c5")>
 
 ' Version information for an assembly consists of the following four values:
 '

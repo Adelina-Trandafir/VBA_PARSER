@@ -1,9 +1,10 @@
 ﻿Imports System.IO
 Imports System.Text
 Imports System.Text.RegularExpressions
-Imports AVACONT_Core.modTypes
-Imports AVACONT_Core
-Imports AVACONT_Core.Logger
+Imports VBA_CORE
+Imports VBA_CORE.Logger
+Imports VBA_CORE.modTypes
+Imports VBA_CORE.VBA_CORE
 
 Module modFileParser
     Public Sub CreateObjectsFromFiles()
@@ -15,7 +16,7 @@ Module modFileParser
             Dim totalCount As Integer = 0
 
             For Each dirName In baseDirs
-                Dim dirPath = Path.Combine(EXPORT_DIR, dirName)
+                Dim dirPath = Path.Combine(modGlobals.Global_ExportDir, dirName)
                 If Not Directory.Exists(dirPath) Then Continue For
 
                 For Each cf In Directory.GetFiles(dirPath, "*_code.txt", SearchOption.TopDirectoryOnly)
@@ -86,7 +87,7 @@ Module modFileParser
         LogInfo("=== ParseFormReportHeaders (structură Access completă) ===")
         'GlobalFormsReports.Clear()
 
-        Dim headerFiles = Directory.GetFiles(EXPORT_DIR, "*_header.txt", SearchOption.AllDirectories)
+        Dim headerFiles = Directory.GetFiles(modGlobals.Global_ExportDir, "*_header.txt", SearchOption.AllDirectories)
         Dim inControlBlock As Boolean = False
         Dim controlDepth As Integer = 0
 
