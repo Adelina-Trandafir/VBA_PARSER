@@ -1,19 +1,16 @@
-﻿Imports System.IO
+﻿'PROJECT NAME: VBA_CORE
+'FILE DESCRIPTION: Modul pentru logare erori și mesaje info
+'PATH: VBA_CORE/Logger.vb
+
+Imports System.IO
 Imports System.Text
 Imports System.Threading
-Imports VBA_CORE
-Imports VBA_CORE.VBA_CORE   ' <-- accesăm direct variabilele globale
 
 Public Module Logger
     ' ===============================
     ' 🧭 EVENTS pentru UI
     ' ===============================
     Public Event OnLogMessage(ByVal message As String, ByVal level As Integer)
-
-    ' ===============================
-    ' 🧰 CONFIG RUNTIME
-    ' ===============================
-    Public mainThreadId As Integer = Thread.CurrentThread.ManagedThreadId
 
     ' ===============================
     ' 🗃️ FILE PATHS
@@ -75,26 +72,28 @@ Public Module Logger
     ' ===============================
     ' ℹ️ INFO LOGGING
     ' ===============================
-    Public Sub LogInfo(msg As String, Optional force As Boolean = False)
+    Public Sub LogInfo(msg As String, Optional verbosityLevel As Integer = 1, Optional force As Boolean = False)
         Static firstWrite As Boolean = True
         Const RUN_LOG As String = "C:\exportvba\runlog.txt"
 
-        If Global_VerboseLevel = 0 AndAlso Not force Then Exit Sub
+        ' Dacă nivelul global este prea mic și nu e forțat, ignoră
+        If Not force AndAlso (verbosityLevel > modGlobals.Global_VerboseLevel) Then Exit Sub
 
         Try
             SyncLock Console.Out
                 Console.WriteLine(msg)
             End SyncLock
 
-            RaiseEvent OnLogMessage(msg, Global_VerboseLevel)
+            ' trimite în UI doar dacă trece de prag
+            RaiseEvent OnLogMessage(msg, verbosityLevel)
 
-            ' log normal în fișier principal
-            If Global_VerboseLevel > 1 Then
-                Directory.CreateDirectory(Global_ExportDir)
-                File.AppendAllText(INFO_LOG, $"[{DateTime.Now:HH:mm:ss}] {msg}{Environment.NewLine}", Encoding.UTF8)
+            ' scrie în fișier doar dacă este suficient de detaliat
+            If modGlobals.Global_VerboseLevel >= 2 OrElse force Then
+                Directory.CreateDirectory(modGlobals.Global_ExportDir)
+                File.AppendAllText(INFO_LOG,
+                $"[{DateTime.Now:HH:mm:ss}] {msg}{Environment.NewLine}", Encoding.UTF8)
             End If
 
-            ' log separat în C:\exportvba\runlog.txt
             Directory.CreateDirectory("C:\exportvba")
             If firstWrite Then
                 File.WriteAllText(RUN_LOG, $"[{DateTime.Now:HH:mm:ss}] {msg}{Environment.NewLine}", Encoding.UTF8)
@@ -106,6 +105,7 @@ Public Module Logger
         Catch
         End Try
     End Sub
+
 
     ' ===============================
     ' 💬 SAFE CONSOLE

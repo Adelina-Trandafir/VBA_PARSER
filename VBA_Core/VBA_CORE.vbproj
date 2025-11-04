@@ -44,6 +44,7 @@
     <OptionInfer>On</OptionInfer>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="netstandard" />
     <Reference Include="System" />
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
@@ -64,8 +65,13 @@
     <Import Include="System.Threading.Tasks" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="DebugExtensionsV2.vb" />
+    <Compile Include="DebugExtensionsV3.vb" />
     <Compile Include="Logger.vb" />
+    <Compile Include="modAccessEventCatalog.vb" />
+    <Compile Include="modAccessPropertyCatalog.vb" />
     <Compile Include="modGlobals.vb" />
+    <Compile Include="modIgnoreLists.vb" />
     <Compile Include="modRegexHelper.vb" />
     <Compile Include="modTypes.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
@@ -103,6 +109,7 @@
       <CustomToolNamespace>My</CustomToolNamespace>
       <LastGenOutput>Settings.Designer.vb</LastGenOutput>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
 </Project>

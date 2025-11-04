@@ -1,55 +1,70 @@
-﻿Imports System.CodeDom
+﻿'PROJECT NAME: VBA_TOKENIZER
+'FILE DESCRIPTION: Module pentru parsarea codului VBA în obiecte (metode, variabile, constante, declarații)
+'PATH: VBA_TOKENIZER/modCodeParser.vb
 Imports System.Collections.Concurrent
-Imports System.Text
 Imports System.Text.RegularExpressions
+Imports System.Threading
 Imports VBA_CORE
 Imports VBA_CORE.Logger
 Imports VBA_CORE.modTypes
-Imports VBA_CORE.VBA_CORE
 
 Public Module modCodeParser
+    Private pCurrentModule As New ThreadLocal(Of String)(Function() "")
+    Private pCurrentType As New ThreadLocal(Of String)(Function() "")
+    Private pCurrentMethod As New ThreadLocal(Of String)(Function() "")
+    Private pCurrentEvent As New ThreadLocal(Of String)(Function() "")
     ' ==============================================================
     '                 BUILD SYMBOL DATABASE
     ' ==============================================================
     Public Sub ParseTextToObjects()
         ' === colecție surse: (Name, Type, Code, FCI)
-        Dim sources As New List(Of (Name As String, Type As String, Code As String, FCI As Object))
+        GlobalSources = New ConcurrentBag(Of (Name As String, Type As String, Code As String, FCI As ModuleContainer))
 
-        ' 1) Forms/Reports (cu CodeContent atașat)
-        For Each kvp In GlobalModules
-            Dim f = kvp.Value
-            If Not String.IsNullOrWhiteSpace(f.CodeContent) Then
-                sources.Add((f.Name, f.Type, f.CodeContent, f))
-            End If
-        Next
-        For Each kv In GlobalFormsReports
-            Dim f = kv.Value
-            If Not String.IsNullOrWhiteSpace(f.CodeContent) Then
-                sources.Add((f.Name, f.Type, f.CodeContent, f))
-            End If
-        Next
-
-        Dim opts As New ParallelOptions With {.MaxDegreeOfParallelism = Environment.ProcessorCount}
-
-        Dim runner As Action =
-            Sub()
-                If modGlobals.Global_UseParallel Then
-                    Parallel.ForEach(sources, opts, Sub(src) ParseSingleCodeBlock(src.Name, src.Type, src.Code, src.FCI))
-                Else
-                    For Each src In sources
-                        ParseSingleCodeBlock(src.Name, src.Type, src.Code, src.FCI)
-                    Next
+        Try
+            ' 1) Forms/Reports (cu CodeContent atașat)
+            For Each kvp In GlobalModules
+                Dim f = kvp.Value
+                If Not String.IsNullOrWhiteSpace(f.CodeContent) Then
+                    GlobalSources.Add((f.Name, f.Type, f.CodeContent, f))
                 End If
-            End Sub
+            Next
+            For Each kv In GlobalFormsReports
+                Dim f = kv.Value
+                If Not String.IsNullOrWhiteSpace(f.CodeContent) Then
+                    GlobalSources.Add((f.Name, f.Type, f.CodeContent, f))
+                End If
+            Next
 
-        runner()
+            Dim opts As New ParallelOptions With {.MaxDegreeOfParallelism = Environment.ProcessorCount}
 
+            Dim runner As Action =
+                Sub()
+                    If modGlobals.Global_UseParallel Then
+                        Parallel.ForEach(GlobalSources, opts, Sub(src) ParseSingleCodeBlock(src.Name, src.Type, src.Code, src.FCI))
+                    Else
+                        For Each src In GlobalSources
+                            ParseSingleCodeBlock(src.Name, src.Type, src.Code, src.FCI)
+                        Next
+                    End If
+                End Sub
+
+            runner()
+
+        Catch ex As Exception
+            LogError(Global_ExportDir & " ParseTextToObjects", ex)
+        End Try
     End Sub
 
     ' ==============================================================
     '                PARSARE pe o singură sursă
     ' ==============================================================
-    Private Sub ParseSingleCodeBlock(currentModule As String, currentType As String, codeContent As String, formOrModule As Object)
+    Private Sub ParseSingleCodeBlock(currentModule As String, currentType As String, codeContent As String, MCI As ModuleContainer)
+        ' === Salvez context curent pentru logging
+        pCurrentModule.Value = currentModule
+        pCurrentType.Value = currentType
+        pCurrentMethod.Value = ""
+        'If currentModule = "clsDatabase" Then Stop
+
         ' === Normalizează tip pentru decizii
         Dim isModule As Boolean = currentType.Equals("Module", StringComparison.OrdinalIgnoreCase)
         Dim isClassLike As Boolean =
@@ -59,22 +74,26 @@ Public Module modCodeParser
         Dim condBlock As String = "" 'decide daca sunt in bloc #If...#Else...#End If
         Dim tmpCondBlock As String = ""
         Dim allLines = codeContent.Split({vbCrLf, vbLf}, StringSplitOptions.None)
+        Dim withStack As New Stack(Of MethodLine)
+        Dim enumOrType As EnumOrType = Nothing
 
-        formOrModule.methods = New Dictionary(Of String, MethodInfo)
-        formOrModule.Declares = New Dictionary(Of String, MethodInfo)
-        formOrModule.Variables = New List(Of ParamInfo)
-        formOrModule.Constants = New List(Of ParamInfo)
+        MCI.Methods = New Dictionary(Of String, MethodInfo)
+        MCI.Declares = New Dictionary(Of String, MethodInfo)
+        MCI.Variables = New List(Of ParamInfo)
+        MCI.Constants = New List(Of ParamInfo)
+        MCI.Events = New Dictionary(Of String, MethodInfo)
+        MCI.Types = New List(Of EnumOrType)
+        MCI.Enums = New List(Of EnumOrType)
 
         'If currentModule = "clsDatabase" Then Stop
 
-        'LogInfo($"Prelucrez metode / proprietati pentru {String.Join(":", currentModule, currentType)}")
-
         Try
-            Dim merged = PreParseCode(codeContent)
+            Dim merged = PreParseCode(codeContent, currentModule)
 
             Dim currentClass As String = If(isClassLike, currentModule, "")
             Dim currentFunc As String = ""
             Dim beforeFirstFunc As Boolean = True
+            Dim tokenizedLine As MethodLine
             Dim currentMethodInfo As MethodInfo = Nothing
             Dim allTokens As New List(Of Token)
             Dim isInType As Boolean
@@ -82,13 +101,33 @@ Public Module modCodeParser
             Dim isInMethod As Boolean = False
             Dim isInCondBlock As Boolean = False
             Dim methodCode As String = ""
+            Dim localLineNum As Long = 0
+            Dim methodLineNum As Long = 0
 
             For Each tpl In merged
                 Dim lineNumber = tpl.lineNum
                 Dim L = tpl.text
-                'If L.Contains("ControlHasProperty2") Then Stop
+                Dim rawL = tpl.rawLine
+
+                localLineNum += 1
+
+                tokenizedLine = New MethodLine With {
+                    .LocalLineNumber = localLineNum,
+                    .LineNumber = lineNumber,
+                    .Content = L,
+                    .OriginalContent = rawL,
+                    .IsInEnumBlock = isInEnum,
+                    .IsInTypeBlock = isInType
+                }
+
+                If withStack.Count > 0 Then
+                    tokenizedLine.IsInWithBlock = True
+                    tokenizedLine.WithBlockContext = withStack.Peek()
+                    tokenizedLine.WithBlockDepth = withStack.Count + 1
+                End If
 
                 If L.StartsWith("#If", StringComparison.OrdinalIgnoreCase) Then
+                    'inceput bloc condițional
                     isInCondBlock = True
                     Dim nextToken As String = L.Split(Space(1))(1)
                     Dim condToken As String
@@ -99,10 +138,11 @@ Public Module modCodeParser
                     End If
 
                     condBlock = String.Join("#", condBlock, condToken)
-                    'LogInfo(currentModule & " Bloc condițional început: " & condBlock)
-                    Continue For
+                    LogInfoLocal(" Conditional block (Start): " & condBlock, 2)
+                    'continue for
 
                 ElseIf L.StartsWith("#Else", StringComparison.OrdinalIgnoreCase) Then
+                    'schimbare condițional
                     tmpCondBlock = condBlock.Split("#"c).Last()
                     Dim parts = condBlock.Split("#"c)
                     If parts.Length = 1 Then
@@ -117,221 +157,331 @@ Public Module modCodeParser
                                      If(tmpCondBlock = "MAC", "",
                                         tmpCondBlock))))), tmpCondBlock)
                     condBlock = String.Join("#", condBlock, tmpCondBlock)
-                    'LogInfo(currentModule & " Bloc condițional schimbat (Else): " & condBlock)
-                    Continue For
+                    LogInfoLocal(" Conditional block (Else): " & condBlock, 2)
+                    'continue for
 
                 ElseIf L.StartsWith("#End") Then
+                    'sfârșit bloc condițional
                     If condBlock.Split("#"c).Length = 1 Then
                         condBlock = ""
                         isInCondBlock = False
                     Else
                         condBlock = condBlock.Substring(0, condBlock.LastIndexOf("#"c))
                     End If
-                    'LogInfo(currentModule & " Bloc condițional încheiat: " & condBlock)
-                    Continue For
+                    LogInfoLocal(" Conditional block (End): " & condBlock, 2)
+                    'continue for
 
                 ElseIf {"Private", "Public"}.Any(Function(p) L.TrimStart().StartsWith(p & " Declare", StringComparison.OrdinalIgnoreCase)) Then
-                    ParseDeclares(L, formOrModule, lineNumber, condBlock)
-                    'LogInfo(currentModule & " Declare detectat: " & L)
+                    ' Declarare functii API
+                    tokenizedLine.IsDeclarationLine = True
+                    ParseDeclares(L, MCI, lineNumber, condBlock)
+                    MCI.Lines.Add(tokenizedLine)
+                    LogInfoLocal(" API: " & L, 2)
                     Continue For
 
                 ElseIf {"Global Const", "Public Const", "Private Const", "Const"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) And Not isInMethod Then
-                    formOrModule.Constants.AddRange(ParseVariable(L, isClassLike, lineNumber, currentModule, RegexCache.RxConsts))
-                    'LogInfo(currentModule & " Constantă detectată: " & L)
-                    Continue For
+                    ' Constante la nivel de modul
+                    MCI.Constants.AddRange(ParseVariable(L, isClassLike, lineNumber, currentModule, RegexCache.RxConsts, currentModule, rawL, localLineNum, 0))
+                    tokenizedLine.IsDeclarationLine = True
+                    LogInfoLocal(" Constant: " & L, 2)
+                    'continue for
 
-                ElseIf {"Public Type", "Private Type", "Type"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
-                    isInType = True
-                    'LogInfo(currentModule & " Început Type: " & L)
-                    Continue For
-
-                ElseIf {"Public Enum", "Private Enum", "Enum"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
-                    isInEnum = True
-                    'LogInfo(currentModule & " Început Enum: " & L)
-                    Continue For
-
-                ElseIf {"Public Event", "Private Event", "Event"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
-                    ParseMethodDeclaration(L, formOrModule, currentMethodInfo, lineNumber, RegexCache.RxEvent, condBlock)
-                    'LogInfo(currentModule & " Început Enum: " & L)
+                ElseIf {"Public Event", "Private Event", "Event"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) AndAlso currentMethodInfo Is Nothing Then
+                    ' Declarare eveniment
+                    tokenizedLine.IsEventLine = True
+                    ParseMethodDeclaration(L, MCI, currentMethodInfo, lineNumber, RegexCache.RxEvent, rawL, condBlock, localLineNum, 0)
+                    LogInfoLocal(" Event: " & L, 2)
+                    MCI.Events.Add(currentMethodInfo.Name, currentMethodInfo)
+                    MCI.Lines.Add(tokenizedLine)
+                    currentMethodInfo = Nothing
                     Continue For
 
                 ElseIf RegexCache.RxMethodTester.IsMatch(L) Then
-                    ParseMethodDeclaration(L, formOrModule, currentMethodInfo, lineNumber, IIf(L.Contains("Property "), RegexCache.RxProperty, RegexCache.RxHeader), condBlock)
+                    'inceput metodă/proprietate
+                    methodLineNum = 0
+                    ParseMethodDeclaration(L, MCI, currentMethodInfo, lineNumber, IIf(L.Contains("Property "), RegexCache.RxProperty, RegexCache.RxHeader), rawL, condBlock, localLineNum, methodLineNum)
+                    pCurrentMethod.Value = currentMethodInfo.Name
+                    tokenizedLine.StartsMethodBlock = True
+                    LogInfoLocal(" Method/Property:" & L, 2)
 
-                    'LogInfo(currentModule & " Metodă/Proprietate detectată: " & currentMethodInfo.Name)
+                ElseIf {"Public Type", "Private Type", "Type"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
+                    ' Început Type
+                    isInType = True
+                    tokenizedLine.StartsTypeBlock = True
+                    enumOrType = New EnumOrType With {
+                        .Name = RegexCache.RxEnumTypeStart.Match(L).Groups(1).Value,
+                        .Type = "Type",
+                        .IsPublic = Not L.TrimStart().StartsWith("Private", StringComparison.OrdinalIgnoreCase),
+                        .IsGlobal = MCI.Type.Equals("Module", StringComparison.OrdinalIgnoreCase)
+                    }
+
+                    LogInfoLocal(" Type: " & L, 2)
 
                 ElseIf L.Trim = "End Type" Then
+                    ' Sfârșit Type
                     isInType = False
-                    'LogInfo(currentModule & " Sfârșit Type")
-                    Continue For
+                    tokenizedLine.EndsTypeBlock = True
+                    tokenizedLine.IsInTypeBlock = False
+
+                    MCI.Types.Add(enumOrType)
+
+                    LogInfoLocal($"Type '{enumOrType.Name}' parsed with {enumOrType.Members.Count} members.", 2)
+
+                    enumOrType = Nothing
+                    'continue for
+
+                ElseIf {"Public Enum", "Private Enum", "Enum"}.Any(Function(p) L.TrimStart.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
+                    ' Început Enum
+                    isInEnum = True
+                    tokenizedLine.StartsEnumBlock = True
+                    enumOrType = New EnumOrType With {
+                        .Name = RegexCache.RxEnumTypeStart.Match(L).Groups(1).Value,
+                        .Type = "Enum",
+                        .IsPublic = Not L.TrimStart().StartsWith("Private", StringComparison.OrdinalIgnoreCase),
+                        .IsGlobal = MCI.Type.Equals("Module", StringComparison.OrdinalIgnoreCase)
+                    }
+
+                    LogInfoLocal(" Enum: " & L, 2)
 
                 ElseIf L.Trim = "End Enum" Then
+                    ' Sfârșit Enum
+                    tokenizedLine.EndsEnumBlock = True
+                    tokenizedLine.IsInEnumBlock = False
                     isInEnum = False
-                    'LogInfo(currentModule & " Sfârșit Enum")
-                    Continue For
+
+                    MCI.Enums.Add(enumOrType)
+
+                    LogInfoLocal($"Enum '{enumOrType.Name}' parsed with {enumOrType.Members.Count} members.", 2)
+
+                    enumOrType = Nothing
+                    'continue for
 
                 ElseIf isInEnum Or isInType Then
-                    'TODO: 
-                    ' - creeare doua noi clase: Types si Enums
-                    ' - adaugare fiecare element din ele in clase de tipul paraminfo
-                    Continue For
+                    ' Prelucrare in interior Type/Enum
+                    tokenizedLine.IsInEnumBlock = isInEnum
+                    tokenizedLine.IsInTypeBlock = isInType
+                    ParseEnumTypeLine(L, enumOrType, IIf(isInEnum, RegexCache.RxEnumMember, RegexCache.RxTypeMember))
 
                 ElseIf L.TrimStart.StartsWith("Attribute") Then
+                    ' Atribute VBA speciale (ignorate la tokenizare, dar utile pentru meta-informații)
                     If isClassLike AndAlso currentMethodInfo IsNot Nothing Then
-                        currentMethodInfo.isdefault = L.Contains("VB_UserMemId")
-                        currentMethodInfo.isenumerable = L.Contains("VB_MemberFlags")
+                        currentMethodInfo.IsDefault = L.Contains("VB_UserMemId")
+                        currentMethodInfo.IsEnumerable = L.Contains("VB_MemberFlags")
                     End If
-                    Continue For
+                    LogInfoLocal(" Attribute:" & L, 2)
+
+                    'continue for
 
                 ElseIf {"Dim", "Static", "Private", "Public"}.Any(Function(p) L.StartsWith(p, StringComparison.OrdinalIgnoreCase)) Then
+                    ' Variabile locale sau globale
                     If currentMethodInfo Is Nothing Then
-                        formOrModule.variables.AddRange(ParseVariable(L, isClassLike, lineNumber, currentModule, RegexCache.RxGlobalVar))
-
+                        ' Variabile la nivel de metoda
+                        MCI.Variables.AddRange(ParseVariable(L, isClassLike, lineNumber, currentModule, RegexCache.RxGlobalVar, currentModule, rawL, localLineNum, methodLineNum))
                     Else
-                        currentMethodInfo.variables.AddRange(ParseVariable(L, isClassLike, lineNumber, currentMethodInfo.name, RegexCache.RxLocalVar))
+                        ' Variabile la nivel de modul
+                        currentMethodInfo.Variables.AddRange(ParseVariable(L, isClassLike, lineNumber, currentMethodInfo.Name, RegexCache.RxLocalVar, currentModule, rawL, localLineNum, localLineNum))
                     End If
-                    'LogInfo(currentModule & " Variabilă detectată: " & L)
-                    Continue For
+                    tokenizedLine.IsDeclarationLine = True
+                    LogInfoLocal(" Variable: " & L, 2)
+                    'continue for
 
                 ElseIf {"Function", "Sub", "Property"}.Any(Function(p) L.TrimStart().StartsWith("End " & p, StringComparison.OrdinalIgnoreCase)) Then
+                    'sfârșit metodă/proprietate
                     If currentMethodInfo IsNot Nothing Then
                         currentMethodInfo.EndLine = lineNumber + 1
+                        tokenizedLine.EndsMethodBlock = True
 
                         Dim startIdx = Math.Max(currentMethodInfo.StartLine - 1, 0)
                         Dim endIdx = Math.Min(currentMethodInfo.EndLine, allLines.Length)
-                        Dim fullMethodName As String = currentMethodInfo.name & condBlock & IIf(currentMethodInfo.isproperty, currentMethodInfo.propertytype, "")
+                        Dim fullMethodName As String = currentMethodInfo.Name & condBlock
+
+                        If TypeOf currentMethodInfo Is PropertyInfo Then
+                            Dim p = DirectCast(currentMethodInfo, PropertyInfo)
+                            fullMethodName &= p.PropertyType
+                        End If
 
                         If endIdx >= startIdx Then
-                            currentMethodInfo.CodeContent = String.Join(vbCrLf, allLines.Skip(startIdx).Take(endIdx - startIdx + 1))
+                            currentMethodInfo.CodeContent = String.Join(vbCrLf, allLines.Skip(startIdx).Take(endIdx - startIdx + 1).SkipWhile(Function(ln) String.IsNullOrWhiteSpace(ln)))
                         Else
                             currentMethodInfo.CodeContent = ""
                         End If
 
-                        ResolveVariableScopes(currentMethodInfo, formOrModule)
+                        'tokenizedLine = New MethodLine With {.LineNumber = lineNumber, .Content = L}
+                        currentMethodInfo.MethodLines.Add(tokenizedLine)
+                        MCI.Lines.Add(tokenizedLine)
+
+                        'ResolveVariableScopes(currentMethodInfo, MCI)
+
+                        LogInfoLocal(" Line parsed: " & L, 2)
+
+                        ' === Finalizare metodă ===
                         Try
-                            formOrModule.Methods.Add(fullMethodName, currentMethodInfo)
+                            MCI.Methods.Add(fullMethodName, currentMethodInfo)
+
+                            ' === Clasificare pe tip ===
+                            If TypeOf currentMethodInfo Is FunctionInfo Then
+                                MCI.Functions(fullMethodName) = DirectCast(currentMethodInfo, FunctionInfo)
+
+                            ElseIf TypeOf currentMethodInfo Is PropertyInfo Then
+                                MCI.Properties(fullMethodName) = DirectCast(currentMethodInfo, PropertyInfo)
+
+                            ElseIf currentMethodInfo.Name.StartsWith("Event", StringComparison.OrdinalIgnoreCase) Then
+                                MCI.Events(fullMethodName) = currentMethodInfo
+                            End If
+
                         Catch ex As Exception
-                            Stop
+                            LogError($"Duplicate or invalid method in {currentModule}: {currentMethodInfo.Name}", ex)
                         End Try
 
                         currentMethodInfo = Nothing
+                        methodLineNum = 0
+                        Continue For
+
                     Else
                         Stop
                         Throw New Exception("End without matching start at line " & lineNumber & " in module " & currentModule)
                     End If
 
                     currentFunc = ""
-                    'LogInfo(currentModule & " Sfârșit metodă/proprietate la linia: " & lineNumber)
-                    Continue For
+                    LogInfoLocal(" End method: " & lineNumber, 2)
+                    'continue for
 
-                ElseIf currentMethodInfo IsNot Nothing Then
-                    Dim tokenizedLine As New MethodLine With {
-                        .LineNumber = lineNumber,
-                        .Content = L,
-                        .Tokens = GetTokensFromLine(L, lineNumber, currentFunc)
-                    }
+                ElseIf L.TrimStart().StartsWith("With ", StringComparison.OrdinalIgnoreCase) Then
+                    ' ===== Începutul unui bloc With =====
+                    Dim withExpr As String = L.Substring(L.IndexOf("With", StringComparison.OrdinalIgnoreCase) + 4).Trim()
 
-                    currentMethodInfo.MethodLines.Add(tokenizedLine)
-                    'LogInfo(currentModule & " Linie metodă procesată: " & L)
+                    tokenizedLine.StartsWithBlock = True
+
+                    withStack.Push(tokenizedLine)
+                    LogInfoLocal($" With block START: '{withExpr}' (depth={withStack.Count})", 2)
+                    'Continue For
+
+                ElseIf L.TrimStart().StartsWith("End With", StringComparison.OrdinalIgnoreCase) Then
+                    ' ===== Sfârșitul unui bloc With =====
+                    tokenizedLine.EndsWithBlock = True
+                    If withStack.Count > 0 Then
+                        Dim closedWith = withStack.Pop()
+                        LogInfoLocal($" With block END: '{closedWith}' (depth={withStack.Count})", 2)
+                    Else
+                        LogInfoLocal(" Warning: End With without matching With", 2)
+                    End If
+                    'Continue For
+                Else
+
                 End If
+
+                ' === Procesare linie normală (în interior sau în afara unei metode)
+                If currentMethodInfo IsNot Nothing Then
+                    methodLineNum += 1
+                    currentMethodInfo.MethodLines.Add(tokenizedLine)
+                End If
+
+                MCI.Lines.Add(tokenizedLine)
+
+
+                LogInfoLocal(" Line parsed: " & L, 2)
             Next
 
-            ' Dacă ultima metodă nu s-a închis, setează EndLine
-            'If currentMethodInfo IsNot Nothing AndAlso merged.Count > 0 Then
-            '    currentMethodInfo.EndLine = merged.Last().lineNum
-            'End If
+            'modExcelExporter.CollectModuleData(currentModule, currentType, MCI)
+            LogInfoLocal(ObjectCounter(MCI), 1)
 
-            'modExcelExporter.CollectModuleData(currentModule, currentType, formOrModule)
-            LogInfo(ObjectCounter(formOrModule))
+            BuildModuleSymbols(MCI)
+            AddToGlobalSymbols(MCI)
+
         Catch ex As Exception
             LogError($"ParseSingleCodeBlock({currentModule})", ex)
 
         End Try
     End Sub
 
-    ' Helper: determină dacă un modul e Class-like (Form/Report/Class) sau Module standard
-    'Public Function IsClassLikeModule(moduleName As String) As Boolean
-    '    ' Verifică în GlobalFormsReports (Forms/Reports)
-    '    If GlobalFormsReports.ContainsKey(moduleName) Then Return True
-
-    '    ' Verifică în GlobalModules
-    '    For Each kvp In GlobalModules
-    '        Dim gm = TryCast(kvp.Value, ModuleContainer)
-    '        If gm.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase) Then
-    '            Return gm.Type.Equals("Class", StringComparison.OrdinalIgnoreCase) OrElse
-    '                   gm.Type.Equals("Form", StringComparison.OrdinalIgnoreCase) OrElse
-    '                   gm.Type.Equals("Report", StringComparison.OrdinalIgnoreCase)
-    '        End If
-    '    Next
-
-    '    Return False
-
-    'End Function
-
     ' ==============================================================
-    '                HELPERS: VARIABLE DETECTION
+    '                HELPERS
     ' ==============================================================
     Private Function ObjectCounter(formOrModule As Object) As String
-        Dim result As New StringBuilder()
-        With formOrModule
-            result.AppendLine($"Module: { .Name} ({ .Type})")
-            result.AppendLine($"  Methods: { .Methods.Count}")
-            result.AppendLine($"  Declares: { .Declares.Count}")
-            result.AppendLine($"  Variables: { .Variables.Count}")
-            result.AppendLine($"  Constants: { .Constants.Count}")
-            Return result.ToString()
-        End With
-    End Function
-
-
-    Private Sub ResolveVariableScopes(ByRef methodInfo As MethodInfo, formOrModule As Object)
-        If methodInfo Is Nothing Then Exit Sub
-
-        ' Construiesc dicționar cu TOATE variabilele accesibile
-        Dim scopeVars As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
-
-        ' 1. Variabile la nivel de MODUL
-        For Each v In formOrModule.Variables
-            scopeVars(v.Name) = v.Type
-        Next
-
-        ' 2. Constante la nivel de MODUL
-        For Each c In formOrModule.Constants
-            scopeVars(c.Name) = c.Type
-        Next
-
-        ' 3. Parametrii metodei (suprascriu cele globale)
-        For Each p In methodInfo.Parameters
-            scopeVars(p.Name) = p.Type
-        Next
-
-        ' 4. Variabilele locale (suprascriu tot)
-        For Each v In methodInfo.Variables
-            scopeVars(v.Name) = v.Type
-        Next
-
-        ' 5. Parcurg toate liniile metodei și actualizez tokenii
-        For Each ml In methodInfo.MethodLines
-            For Each tok In ml.Tokens
-                ' Variabilă directă
-                If scopeVars.ContainsKey(tok.TokenString) Then
-                    Select Case tok.TokenType
-                        Case "identifier", "unknown"
-                            tok.TokenType = "variable"
-                            tok.DataType = scopeVars(tok.TokenString)
-                        Case "object"
-                            tok.DataType = scopeVars(tok.TokenString)
-                    End Select
-                End If
-
-                ' Proprietate de obiect cunoscut
-                If tok.Parent IsNot Nothing AndAlso scopeVars.ContainsKey(tok.Parent.TokenString) Then
-                    If tok.TokenType = "property" OrElse tok.TokenType = "method" Then
-                        tok.Parent.DataType = scopeVars(tok.Parent.TokenString)
-                    End If
-                End If
+        Dim totalTokens As Long = 0
+        For Each m In formOrModule.Methods.Values
+            For Each ml In m.MethodLines
+                totalTokens += ml.Tokens.Count
             Next
         Next
+
+        Return $"Methods: {formOrModule.Methods.Count}; " &
+           $"Declares: {formOrModule.Declares.Count}; " &
+           $"Variables: {formOrModule.Variables.Count}; " &
+           $"Constants: {formOrModule.Constants.Count}; " &
+           $"Tokens: {totalTokens}"
+    End Function
+
+    Private Sub LogInfoLocal(ByVal msg As String, level As Integer, Optional force As Boolean = False)
+        If pCurrentMethod.Value <> "" Then
+            msg = $"({pCurrentType.Value}) [{pCurrentModule.Value}].[{pCurrentMethod.Value}] : {msg}"
+        Else
+            msg = $"({pCurrentType.Value}) [{pCurrentModule.Value}] : {msg}"
+        End If
+
+        LogInfo(msg, level, force)
+    End Sub
+
+    Private Sub ParseEnumTypeLine(L As String, ByRef enumOrType As EnumOrType, rxToUse As Regex)
+        Try
+            Dim raw = L.Trim()
+
+            ' === 1️⃣ extrage context din linia parinte ===
+            Dim isEnum As Boolean = rxToUse Is RegexCache.RxEnumMember
+
+            ' ex: Public Enum CustomerStatus → numele = CustomerStatus
+            Dim parentName As String = enumOrType.Name
+
+            ' === 2️⃣ identifică nume + tip / valoare ===
+            Dim fieldName As String = ""
+            Dim fieldType As String = ""
+            Dim fieldValue As String = ""
+            Dim m = rxToUse.Match(raw)
+
+            If rxToUse Is RegexCache.RxEnumMember Then
+                If m.Success Then
+                    fieldName = m.Groups("name").Value
+                    fieldValue = If(m.Groups("val").Success, m.Groups("val").Value, "")
+                    fieldType = "Long"
+                End If
+
+            Else
+                If m.Success Then
+                    fieldName = m.Groups("name").Value
+                    fieldType = m.Groups("type").Value
+                End If
+            End If
+
+            If String.IsNullOrEmpty(fieldName) Then Exit Sub
+
+            ' === 3️⃣ compune calificativul complet
+            Dim qualifiedName As String = $"{parentName}.{fieldName}"
+
+            ' === 4️⃣ creează simbolul și îl adaugă în container ===
+            ' === Creează simbolul pentru membru Enum/Type ===
+            Dim memberTokenType As TokenTypeEnum = If(isEnum, TokenTypeEnum.enum_decl, TokenTypeEnum.type_field_decl)
+            Dim memberToken As New Token With {.TokenString = fieldName, .TokenType = memberTokenType, .LineNumber = 0}
+
+            Dim member As New ParamInfo With {
+                .Name = fieldName,
+                .Type = fieldType,
+                .IsGlobal = enumOrType.IsGlobal,
+                .IsPublic = enumOrType.IsPublic,
+                .QualifiedName = enumOrType.Name & "." & fieldName,
+                .Tokens = New List(Of Token) From {memberToken}
+            }
+
+            If isEnum Then
+                member.Value = fieldValue
+            End If
+
+            enumOrType.Members.Add(member)
+
+            LogInfoLocal($"Parsed {If(isEnum, "Enum", "Type")} member: {qualifiedName} ({fieldType})", 2)
+
+        Catch ex As Exception
+            LogError($"ParseEnumTypeLine({enumOrType.Name})", ex)
+        End Try
     End Sub
 
     Private Sub ParseDeclares(L As String, ByRef formOrModule As Object, lineNumber As Long, Optional condBlock As String = "")
@@ -383,18 +533,27 @@ Public Module modCodeParser
                 End If
             Next
 
-            currentMethodInfo = New MethodInfo With {
-                .Name = name,
-                .Signature = L,
-                .ParentModule = formOrModule.name,
-                .ParentType = formOrModule.Type,
-                .StartLine = lineNumber,
-                .EndLine = lineNumber,
-                .MethodScope = access.ToLowerInvariant(),
-                .MethodLines = New List(Of MethodLine),
-                .IsFunction = kind.Equals("Function", StringComparison.OrdinalIgnoreCase),
-                .ReturnType = returnType
-            }
+            If kind.Equals("Function", StringComparison.OrdinalIgnoreCase) Then
+                currentMethodInfo = New FunctionInfo With {
+                    .IsFunction = True,
+                    .ReturnType = returnType,
+                    .ReturnObject = Nothing
+                }
+            Else
+                currentMethodInfo = New MethodInfo()
+            End If
+
+            With currentMethodInfo
+                .Name = name
+                .Signature = L
+                .ParentModule = formOrModule.Name
+                .ParentType = formOrModule.Type
+                .StartLine = lineNumber
+                .EndLine = lineNumber
+                .MethodScope = access.ToLowerInvariant()
+                .MethodLines = New List(Of MethodLine)
+                .Parameters = paramsRaw
+            End With
 
             For Each prm In paramsRaw
                 prm.ParentMethod = currentMethodInfo
@@ -404,13 +563,14 @@ Public Module modCodeParser
 
             formOrModule.Declares.add(fullName, currentMethodInfo)
 
+            LogInfoLocal($" Parsed declare: {currentMethodInfo.Name} with {paramsRaw.Count} params.", 2)
         Catch ex As Exception
-            LogError("ParseMethodDeclaration", ex)
+            LogError($" -> ({formOrModule.name}) ParseDeclare", ex)
             'Stop
         End Try
     End Sub
 
-    Private Sub ParseMethodDeclaration(L As String, formOrModule As Object, ByRef currentMethodInfo As Object, lineNumber As Long, rxToUse As Regex, Optional condBlock As String = "")
+    Private Sub ParseMethodDeclaration(L As String, formOrModule As Object, ByRef currentMethodInfo As Object, lineNumber As Long, rxToUse As Regex, rawLine As String, condBlock As String, localLineNumber As Integer, methodLineNumber As Integer)
         Dim paramsRaw As List(Of ParamInfo) = Nothing
         Dim access As String = "Public"
         Dim kind As String = ""
@@ -452,7 +612,7 @@ Public Module modCodeParser
             Dim fullName = String.Join(".", formOrModule.Name, name) & If(condBlock <> "", "#" & condBlock, "")
 
             Dim matches = RegexCache.RxParams.Matches(inner)
-            Dim tokenizedLine As New MethodLine With {.LineNumber = lineNumber, .Content = L}
+            Dim tokenizedLine As New MethodLine With {.LineNumber = lineNumber, .Content = L, .LocalLineNumber = localLineNumber}
 
             For Each pm As Match In matches
                 If pm.Success Then
@@ -472,66 +632,85 @@ Public Module modCodeParser
                         .IsGlobal = False
                     }
 
-                    paramsRaw.Add(prm)
-
+                    ' 🔹 Adaug token explicit (util pentru analiză ulterioară)
                     Dim paramToken As New Token With {
-                        .Context = name,
-                        .IsLeftSide = False,  ' parametrii nu sunt LHS
+                        .TokenString = pName,
+                        .TokenType = TokenTypeEnum.parameter_decl,   ' 🔹 clarificare semnătură
                         .LineNumber = lineNumber,
-                        .NextSymbol = "As",
-                        .TokenString = prm.Name,
-                        .TokenType = "parameter"  ' nu "Variable"
+                        .LocalLineNumber = localLineNumber,
+                        .MethodLineNumber = methodLineNumber
                     }
 
-                    tokenizedLine.Tokens.Add(paramToken)
+                    prm.Tokens.Add(paramToken)
+                    paramsRaw.Add(prm)
 
-                    If Not String.IsNullOrEmpty(prm.Type) Then
-                        Dim typeToken As New Token With {
-                            .Context = name,
-                            .IsLeftSide = False,
-                            .LineNumber = lineNumber,
-                            .NextSymbol = "",
-                            .TokenString = prm.Type,
-                            .TokenType = "type",  ' lowercase pentru consistență
-                            .Parent = paramToken  ' legătura cu parametrul
-                        }
-
-                        tokenizedLine.Tokens.Add(typeToken)
-
-                        ' Salvez tipul în parametru pentru referință
-                        paramToken.DataType = prm.Type
-                    End If
                 End If
             Next
 
-            currentMethodInfo = New MethodInfo With {
-                .Name = name,
-                .Signature = L,
-                .ParentModule = formOrModule.name,
-                .ParentType = formOrModule.Type,
-                .StartLine = lineNumber,
-                .EndLine = If(kind = "Event", lineNumber, 0),
-                .MethodScope = access.ToLowerInvariant(),
-                .MethodLines = New List(Of MethodLine),
-                .IsFunction = kind.Equals("Function", StringComparison.OrdinalIgnoreCase),
-                .IsProperty = kind.Equals("Property", StringComparison.OrdinalIgnoreCase),
-                .ReturnType = returnType,
-                .PropertyType = propertyType
-            }
+            If kind.Equals("Function", StringComparison.OrdinalIgnoreCase) Then
+                currentMethodInfo = New FunctionInfo With {
+                    .IsFunction = True,
+                    .ReturnType = returnType,
+                    .ReturnObject = Nothing
+                }
+
+            ElseIf kind.Equals("Property", StringComparison.OrdinalIgnoreCase) Then
+                currentMethodInfo = New PropertyInfo With {
+                    .IsProperty = True,
+                    .PropertyType = propertyType,
+                    .ReturnType = returnType,
+                    .ReturnObject = Nothing
+                }
+
+            Else
+                currentMethodInfo = New MethodInfo()
+            End If
+
+            ' === comun pentru toate
+            With currentMethodInfo
+                .Name = name
+                .Signature = L
+                .ParentModule = formOrModule.Name
+                .ParentType = formOrModule.Type
+                .StartLine = lineNumber
+                .EndLine = If(kind = "Event", lineNumber, 0)
+                .MethodScope = access.ToLowerInvariant()
+                .MethodLines = New List(Of MethodLine)
+                .Parameters = paramsRaw
+            End With
+
+            ' === 🔹 Detectăm evenimente implicite VBA (Form_Click, Text1_AfterUpdate etc.)
+            Try
+                Dim handlerObj As String = Nothing
+                Dim handlerEvt As String = Nothing
+                Dim handlerType As String = Nothing
+
+                If modAccessEventCatalog.TryParseEventHandlerName(name, handlerObj, handlerEvt, handlerType) Then
+                    currentMethodInfo.IsAccessEventHandler = True
+                    currentMethodInfo.HandlerObject = handlerObj
+                    currentMethodInfo.HandlerEvent = handlerEvt
+                    currentMethodInfo.HandlerObjectType = handlerType
+
+                    LogInfoLocal($" ↳ Access EventHandler detected: [{handlerObj}].[{handlerEvt}] ({handlerType})", 2)
+                End If
+            Catch ex As Exception
+                LogError("TryParseEventHandlerName", ex)
+            End Try
 
             For Each prm In paramsRaw
                 prm.ParentMethod = currentMethodInfo
             Next
 
             currentMethodInfo.Parameters = paramsRaw
-            If tokenizedLine.Tokens.Count > 0 Then currentMethodInfo.TokenizedLine = tokenizedLine
+            'If tokenizedLine.Tokens.Count > 0 Then currentMethodInfo.TokenizedLine = tokenizedLine
 
+            LogInfoLocal($" Parsed method declaration: {currentMethodInfo.Name} with {paramsRaw.Count} params.", 2)
         Catch ex As Exception
-            LogError("ParseMethodDeclaration", ex)
+            LogError($" -> ({formOrModule.name}) ParseMetgodDelcaration", ex)
         End Try
     End Sub
 
-    Private Function ParseVariable(L As String, isClassLike As Boolean, lineNumber As Integer, context As String, rxToUse As Regex) As List(Of ParamInfo)
+    Private Function ParseVariable(L As String, isClassLike As Boolean, lineNumber As Integer, context As String, rxToUse As Regex, moduleName As String, rawLine As String, localLineNum As Integer, methodLineNum As Integer) As List(Of ParamInfo)
         Dim matches = rxToUse.Matches(L)
         Dim isGlobal As Boolean = False
         Dim result As New List(Of ParamInfo)
@@ -580,8 +759,10 @@ Public Module modCodeParser
                     ' Token pentru numele variabilei
                     Dim nameToken As New Token With {
                         .LineNumber = lineNumber,
+                        .LocalLineNumber = localLineNum,
+                        .MethodLineNumber = methodLineNum,
                         .TokenString = pName,
-                        .TokenType = "variable",  ' consistent
+                        .TokenType = TokenTypeEnum.variable_decl,  ' consistent
                         .Context = context,
                         .Parent = Nothing,
                         .NextSymbol = If(String.IsNullOrEmpty(pType), "", "As"),
@@ -598,22 +779,28 @@ Public Module modCodeParser
                             Dim part = typeParts(i)
                             Dim nextSym As String = If(i < typeParts.Length - 1, ".", "")
 
-                            Dim typeToken As New Token With {
+                            Dim tToken As New Token With {
                                 .LineNumber = lineNumber,
+                                .LocalLineNumber = localLineNum,
+                                .MethodLineNumber = methodLineNum,
                                 .TokenString = part,
-                                .TokenType = If(i = 0, "type", "property"), ' primul e tip, restul proprietăți
+                                .TokenType = TokenTypeEnum.unknown_type,
                                 .Context = context,
-                                .Parent = prevToken,
                                 .NextSymbol = nextSym,
                                 .IsLeftSide = False
                             }
-                            tokens.Add(typeToken)
-                            prevToken = typeToken
+                            tokens.Add(tToken)
+                            prevToken = tToken
                         Next
 
                         ' Salvez tipul în token-ul variabilei
                         nameToken.DataType = pType
+                        nameToken.IsResolved = True
+                        nameToken.ResolvedRef = prevToken
                     End If
+
+                    ' Map tokeni la coloane în linia raw
+                    MapTokensToColumns(tokens, rawLine, L)
 
                     Dim prm As New ParamInfo With {
                         .Name = pName,
@@ -621,32 +808,38 @@ Public Module modCodeParser
                         .IsPublic = rxToUse IsNot RegexCache.RxParams AndAlso (access = "Public" Or access = "" And Not isClassLike),
                         .Type = pType,
                         .Value = pValue,
-                        .Tokens = tokens
+                        .Tokens = tokens,
+                        .IsWithEvents = isWithEvents
                     }
 
                     result.Add(prm)
                 End If
             Next
 
+            LogInfoLocal($" Parsed {result.Count} variables from line.", 2)
+
             Return result
 
         Catch ex As Exception
-            LogError("ParseVariable", ex)
+            LogError($" -> ({moduleName}:{context}) ParseVariabls", ex)
             Return New List(Of ParamInfo)
         End Try
     End Function
 
-    Private Function PreParseCode(codeContent As String) As List(Of (lineNum As Integer, text As String))
+    Private Function PreParseCode(codeContent As String, moduleName As String) As List(Of (lineNum As Integer, text As String, rawLine As String))
         ' === Preproc: unește liniile cu underscore și numerotează ===
         Dim rawLines = codeContent.Split({vbCrLf, vbLf}, StringSplitOptions.None).ToList()
-        Dim merged As New List(Of (lineNum As Integer, text As String))
+        Dim merged As New List(Of (lineNum As Integer, text As String, rawLine As String))
         Dim buffer As String = ""
         Dim ln As Integer = 1, startNum As Integer = 1
         Dim isContinued = False
+        Dim rawIndex As Integer = 1
 
         Try
             For Each raw In rawLines
+                LogInfoLocal($"({ln}) Raw Line: {raw}", 2)
                 Dim L = raw.TrimEnd()
+                rawIndex += 1
                 'If L.Contains("Function InitGDIP()") Then Stop
                 'If L.Contains("BCryptHashData") Then Stop
 
@@ -671,7 +864,7 @@ Public Module modCodeParser
                     ' finalizează linia continuată
                     For Each part In RegexCache.RxSplitColon.Split(buffer)
                         Dim cleaned = CleanLineForShits(part.Trim())
-                        If cleaned <> "" Then merged.Add((startNum, cleaned))
+                        If cleaned <> "" Then merged.Add((startNum, cleaned, buffer))
                     Next
                     buffer = ""
                     isContinued = False
@@ -683,14 +876,14 @@ Public Module modCodeParser
                         'daca ramane un singur cuvant in element, nu poate fi altceva deca label destinatie pentru goto
                         If part.Split(" "c).Length = 1 Then
                             'ii pun inapoi:
-                            merged.Add((ln, part & ":"))
+                            merged.Add((ln, part & ":", L))
                         Else
                             Dim cleaned = CleanLineForShits(part.Trim())
-                            If cleaned <> "" Then merged.Add((ln, cleaned))
+                            If cleaned <> "" Then merged.Add((ln, cleaned, L))
                         End If
                     Next
                 End If
-
+                LogInfoLocal($"({ln}) Parsed Line: {L}", 2)
                 ln += 1
             Next
 
@@ -698,29 +891,16 @@ Public Module modCodeParser
             If buffer <> "" Then
                 For Each part In RegexCache.RxSplitColon.Split(buffer)
                     Dim cleaned = CleanLineForShits(part.Trim())
-                    If cleaned <> "" Then merged.Add((startNum, cleaned))
+                    If cleaned <> "" Then merged.Add((startNum, cleaned, buffer))
                 Next
             End If
 
             Return merged
 
         Catch ex As Exception
-            LogError("PreParseCode", ex)
-            Return New List(Of (lineNum As Integer, text As String))
+            LogError($" -> ({moduleName}) PreParseCode", ex)
+            Return New List(Of (lineNum As Integer, text As String, rawLine As String))
         End Try
-    End Function
-
-    Private Function ParseClassField(line As String, currentModule As String, currentClass As String) As VariableInfo
-        Dim m = RegexCache.RxClassField.Match(line)
-        If Not m.Success Then Return Nothing
-
-        Return New VariableInfo With {
-            .Name = m.Groups("n").Value,
-            .TypeName = If(m.Groups("type").Success, m.Groups("type").Value, ""),
-            .CallerModule = currentModule,
-            .ScopeFunc = currentClass,
-            .IsWithEvents = m.Groups("we").Success
-        }
     End Function
 
     Private Function CleanLineForShits(line As String) As String
@@ -735,4 +915,132 @@ Public Module modCodeParser
 
         Return noAmpersands.Trim()
     End Function
+
+    ' ==============================================================
+    ' MAP TOKEN COLUMNS - găsește coloana fiecărui token în linia raw
+    ' ==============================================================
+    Public Sub MapTokensToColumns(ByRef tokens As List(Of Token), rawLine As String, cleanLine As String)
+        If tokens Is Nothing OrElse tokens.Count = 0 Then Return
+        If String.IsNullOrEmpty(rawLine) AndAlso String.IsNullOrEmpty(cleanLine) Then Return
+
+        Dim offsetRaw As Integer = 0
+        Dim offsetClean As Integer = 0
+
+        For Each token In tokens
+            If String.IsNullOrEmpty(token.TokenString) Then Continue For
+
+            ' Caută în RAW line pentru ColumnNumber
+            If Not String.IsNullOrEmpty(rawLine) Then
+                Dim foundPosRaw = rawLine.IndexOf(token.TokenString, offsetRaw, StringComparison.Ordinal)
+                If foundPosRaw >= 0 Then
+                    token.ColumnNumber = foundPosRaw + 1  ' 1-indexed
+                    offsetRaw = foundPosRaw + token.TokenString.Length
+                Else
+                    token.ColumnNumber = 0
+                End If
+            Else
+                token.ColumnNumber = 0
+            End If
+
+            ' Caută în CLEAN line pentru ColumnNumberLocal
+            If Not String.IsNullOrEmpty(cleanLine) Then
+                Dim foundPosClean = cleanLine.IndexOf(token.TokenString, offsetClean, StringComparison.Ordinal)
+                If foundPosClean >= 0 Then
+                    token.LocalColumnNumber = foundPosClean + 1  ' 1-indexed
+                    token.MethodColumnNumber = foundPosClean + 1
+                    offsetClean = foundPosClean + token.TokenString.Length
+                Else
+                    token.LocalColumnNumber = 0
+                End If
+            Else
+                token.LocalColumnNumber = 0
+            End If
+        Next
+    End Sub
+
+    Private Sub BuildModuleSymbols(base As ModuleContainer)
+        base.ModuleSymbols.Clear()
+
+        ' === Variabile modul ===
+        If base.Variables IsNot Nothing Then
+            For Each v In base.Variables
+                base.ModuleSymbols.Add(New SymbolEntry With {
+                .Name = v.Name,
+                .TypeName = v.Type,
+                .DeclType = "Variable",
+                .Scope = v.Scope,
+                .SourceObject = v
+            })
+            Next
+        End If
+
+        ' === Constante modul ===
+        If base.Constants IsNot Nothing Then
+            For Each c In base.Constants
+                base.ModuleSymbols.Add(New SymbolEntry With {
+                .Name = c.Name,
+                .TypeName = c.Type,
+                .DeclType = "Const",
+                .Scope = c.Scope,
+                .SourceObject = c
+            })
+            Next
+        End If
+
+        ' === Funcții ===
+        If base.Functions IsNot Nothing Then
+            For Each fn In base.Functions.Values
+                base.ModuleSymbols.Add(New SymbolEntry With {
+                .Name = fn.Name,
+                .TypeName = fn.ReturnType,
+                .DeclType = "Function",
+                .Scope = fn.MethodScope,
+                .SourceObject = fn
+            })
+            Next
+        End If
+
+        ' === Proprietăți ===
+        If base.Properties IsNot Nothing Then
+            For Each p In base.Properties.Values
+                base.ModuleSymbols.Add(New SymbolEntry With {
+                .Name = p.Name,
+                .TypeName = p.ReturnType,
+                .DeclType = "Property",
+                .Scope = p.MethodScope,
+                .SourceObject = p
+            })
+            Next
+        End If
+
+        ' === Form Controls ===
+        If TypeOf base Is FormReportContainer Then
+            Dim f = DirectCast(base, FormReportContainer)
+            If f.Controls IsNot Nothing Then
+                For Each c In f.Controls
+                    base.ModuleSymbols.Add(New SymbolEntry With {
+                    .Name = c.Name,
+                    .TypeName = c.Type,
+                    .DeclType = "Control",
+                    .Scope = "Private",
+                    .SourceObject = c
+                })
+                Next
+            End If
+        End If
+
+        ' NU adăugăm variabile locale în ModuleSymbols
+    End Sub
+
+    Private Sub AddToGlobalSymbols(mci As ModuleContainer)
+        If mci.Type <> "Module" Then Exit Sub
+
+        For Each sym In mci.ModuleSymbols
+            If sym.Scope <> "Public" Then Continue For
+            Dim key = $"{mci.Name}.{sym.Name}"
+            If Not GlobalSymbols.ContainsKey(key) Then
+                GlobalSymbols(key) = sym
+            End If
+        Next
+    End Sub
 End Module

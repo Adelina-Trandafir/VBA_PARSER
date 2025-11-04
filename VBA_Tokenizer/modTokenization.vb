@@ -3,11 +3,9 @@
 'PATH: VBA_TOKENIZER/modTokenization.vb
 
 Imports System.Text.RegularExpressions
-'Imports OfficeOpenXml.FormulaParsing.LexicalAnalysis
 Imports VBA_CORE
 Imports VBA_CORE.modAccessPropertyCatalog
 Imports VBA_CORE.modTypes
-Imports VBA_CORE.VBA_CORE
 
 Public Module Tokenizer
     Private pCurrentType As New Threading.ThreadLocal(Of String)(Function() "")
@@ -164,7 +162,7 @@ Public Module Tokenizer
                         .Context = methodContext,
                         .SourceLine = line,
                         .WithBlockDepth = line.WithBlockDepth,
-                        .TokenType = "unresolved"
+                        .TokenType = TokenTypeEnum.Unresolved
                     }
 
                     'If tok.TokenString = "Err" Then Stop
@@ -176,24 +174,24 @@ Public Module Tokenizer
                         Else
                             asContextTarget.DataType = tok.TokenString
                             If line.IsDeclarationLine Then
-                                asContextTarget.TokenType = "variable_decl"
+                                asContextTarget.TokenType = TokenTypeEnum.Variable
                             ElseIf line.StartsMethodBlock Then
-                                asContextTarget.TokenType = "param_decl"
+                                asContextTarget.TokenType = TokenTypeEnum.Parameter
                             ElseIf line.IsInTypeBlock Then
-                                asContextTarget.TokenType = "type_decl"
+                                asContextTarget.TokenType = TokenTypeEnum.Type
                             ElseIf line.IsInEnumBlock Then
-                                asContextTarget.TokenType = "enum_decl"
+                                asContextTarget.TokenType = TokenTypeEnum.Enum
                             ElseIf line.IsDeclarationLine AndAlso currentMethod Is Nothing Then
-                                asContextTarget.TokenType = "param_decl_api"
+                                asContextTarget.TokenType = TokenTypeEnum.Parameter
                             ElseIf line.IsEventLine Then
-                                asContextTarget.TokenType = "param_decl_event"
+                                asContextTarget.TokenType = TokenTypeEnum.Parameter
                             Else
                                 Stop
                             End If
                             asContextTarget = Nothing
                         End If
 
-                        tok.TokenType = "unknown_type"
+                        tok.TokenType = TokenTypeEnum.Unresolved
                     End If
 
                     Dim testBuiltIn As Boolean = Not tok.NextSymbol.ToUpper().Contains("AS")
@@ -214,12 +212,12 @@ Public Module Tokenizer
                             Case "Access Function" : tok.TokenType = "access_function"
                             Case "External Library" : tok.TokenType = "external_prefix"
                             Case "VBA Keyword" : tok.TokenType = "vba_keyword"
-                            Case Else : tok.TokenType = "unresolved"
+                            Case Else : tok.TokenType = TokenTypeEnum.Unresolved
                         End Select
                     End If
 
                     ' === 7.1️⃣ Detectează tokenii din linii de declarație (Dim / Const) ===
-                    If line.IsDeclarationLine AndAlso tok.TokenType = "unresolved" Then
+                    If line.IsDeclarationLine AndAlso tok.TokenType = TokenTypeEnum.Unresolved Then
                         ' Verificăm tipul de declarație
                         Dim isConstDecl = line.Content.TrimStart().StartsWith("Const ", StringComparison.OrdinalIgnoreCase)
 
@@ -228,14 +226,14 @@ Public Module Tokenizer
 
                             ' Caz 1: dacă urmează "As" => tipul va fi completat mai jos
                             If tok.NextSymbol.Equals("As", StringComparison.OrdinalIgnoreCase) Then
-                                tok.TokenType = If(isConstDecl, "constant_decl", "variable_decl")
+                                tok.TokenType = If(isConstDecl, TokenTypeEnum.Constant, TokenTypeEnum.Variable)
                                 tok.ResolvedScope = If(currentMethod Is Nothing, "module_decl", "local_decl")
                                 tok.IsResolved = True
                                 tok.DataType = ""          ' completăm la pasul cu AsContextTarget
 
                                 ' Caz 2: dacă urmează virgulă sau nimic => implicit Variant
                             ElseIf tok.NextSymbol = "," OrElse tok.NextSymbol = "" Then
-                                tok.TokenType = If(isConstDecl, "constant_decl", "variable_decl")
+                                tok.TokenType = If(isConstDecl, TokenTypeEnum.Constant, TokenTypeEnum.Variable)
                                 tok.ResolvedScope = If(currentMethod Is Nothing, "module_decl", "local_decl")
                                 tok.IsResolved = True
                                 tok.DataType = "Variant"
@@ -254,7 +252,7 @@ Public Module Tokenizer
                             tok.IsBuiltIn = True
                         End If
                     Else
-                        tok.IsBuiltIn = (tok.TokenType <> "unresolved")
+                        tok.IsBuiltIn = (tok.TokenType <> TokenTypeEnum.Unresolved)
                     End If
 
                     ' 🔹 stabilește relația internă în expresie (Parent → Child)

@@ -1,4 +1,8 @@
-﻿Imports System.Text.RegularExpressions
+﻿'PROJECT NAME: VBA_TOKENIZER
+'FILE DESCRIPTION: Module pentru lista de ignorare a tokenilor VBA
+'PATH: VBA_TOKENIZER/modIgnoreList.vb
+
+Imports System.Text.RegularExpressions
 Imports VBA_CORE.modTypes
 
 Public Module VBAIgnoreList

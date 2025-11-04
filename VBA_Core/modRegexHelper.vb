@@ -1,7 +1,7 @@
 ﻿
-' ==============================================================
-'  CLASA HELPER CU REGEX-URI COMPILATE (PERFORMANȚĂ +30%)
-' ==============================================================
+'PROJECT NAME: VBA_CORE
+'FILE DESCRIPTION: Modul pentru regex-uri utilizate în analiza VBA
+'PATH: VBA_CORE/modRegexHelper.vb
 Imports System.Text.RegularExpressions
 
 Public Class RegexCache
@@ -17,6 +17,15 @@ Public Class RegexCache
 
     'Properties
     Public Shared ReadOnly RxProperty As New Regex("^(?:(Public|Private|Friend)\s+)?Property\s+(Get|Let|Set)\s+([A-Za-z_]\w*)\s*\(\s*((?:[^()""]+|""(?:[^""]|"")*""|\([^()]*\))*)\s*\)(?:\s+As\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\(\))?))?", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    ' Tipul sectiunii din Form/Report
+    Public Shared ReadOnly RxSectionType As New Regex("^(Section|FormHeader|FormFooter|ReportHeader|ReportFooter|PageHeader|PageFooter|FormPageHeader|FormPageFooter|ReportPageHeader|ReportPageFooter)$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    ' Decteaza inceputul unei machete
+    Public Shared ReadOnly RxFormOrReport As New Regex("^(Form|Report)$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    'Decteaza inceputul unei sectiuni de formular/raport
+    Public Shared ReadOnly RxBeginPrtForm As New Regex("^(?i)\s*([A-Za-z_]\w*)\s*=\s*Begin\b", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 
     Public Shared ReadOnly RxEndMethod As New Regex("^\s*End\s+(Sub|Function|Property)\s*$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Public Shared ReadOnly RxParamsInit As New Regex("\((.*)\)", RegexOptions.Singleline Or RegexOptions.Compiled)
@@ -35,7 +44,8 @@ Public Class RegexCache
     Public Shared ReadOnly RxDeclares As New Regex("^(?i)(Public|Private)?\s*(Declare(?:\s+PtrSafe)?)\s+(Function|Sub)\s+([A-Za-z_]\w*)\s+Lib\s+""([^""]+)""(?:\s+Alias\s+""([^""]+)"")?\s*\(\s*((?:[^()""']+|""(?:[^""]|"")*""|\([^()]*\))*)\s*\)\s*(?:As\s+([\w.]+))?", RegexOptions.Compiled)
 
     ' Tokenizer
-    Public Shared ReadOnly RxTokenizer As New Regex("([A-Za-z_]\w*)\s*(=|\(|\.|,|\+|\-|\*|/|&|\)|\s+(?=[A-Za-z_]\w*)|$)(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.Compiled)
+    'Public Shared ReadOnly RxTokenizer As New Regex("([A-Za-z_]\w*)\s*(=|\(|\.|,|\+|\-|\*|\/|&|\)|\s+(?=[A-Za-z_]\w*)|$)(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.Compiled)
+    Public Shared ReadOnly RxTokenizer As New Regex("(\.?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(=|\(|,|\+|\-|\*|/|&|\)|As|\s+|$)(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 
     ' Split dupa :
     Public Shared ReadOnly RxSplitColon As New Regex(":(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.Compiled)
@@ -84,4 +94,10 @@ Public Class RegexCache
         "Implements", "Handles", "Inherits", "MustInherit", "MustOverride", "Overrides",
         "Overridable", "NotOverridable", "Overloads", "Shadows", "Shared", "Protected"
     }
+
+    ' Detectie Type/Enum
+    Public Shared ReadOnly RxEnumTypeStart As New Regex("(?:Type |Enum )(\w+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Public Shared ReadOnly RxEnumMember As New Regex("^(?:\[?(?<name>[A-Za-z_]\w*|\[[^\]]+\])\]?)(?:\s*=\s*(?<value>[-+]?(?:&H[0-9A-Fa-f]+|\d+)))?", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Public Shared ReadOnly RxTypeMember As New Regex("^(?<name>[A-Za-z_]\w*)\s+As\s+(?<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\([^)]*\))?)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
 End Class

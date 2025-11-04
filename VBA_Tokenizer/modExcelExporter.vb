@@ -408,19 +408,19 @@ Public Module modExcelExporter
         })
         idx += 1
 
-        If method.IsFunction Then
-            ExportQueue.Enqueue(New ExportRow With {
-                .Level0 = moduleName,
-                .Level1 = moduleType,
-                .Level2 = memberType,
-                .Level3 = method.Name,
-                .Level4 = "ReturnType",
-                .Level5 = method.ReturnType,
-                .ModuleName = moduleName,
-                .SortOrder = idx
-            })
+        If TypeOf method Is FunctionInfo Then
+            Dim f = DirectCast(method, FunctionInfo)
+            AddExportRow(ExportQueue, moduleName, moduleType, memberType, f.Name, "ReturnType", f.ReturnType, idx)
+            idx += 1
+
+        ElseIf TypeOf method Is PropertyInfo Then
+            Dim p = DirectCast(method, PropertyInfo)
+            AddExportRow(ExportQueue, moduleName, moduleType, memberType, p.Name, "PropertyType", p.PropertyType, idx)
+            idx += 1
+            AddExportRow(ExportQueue, moduleName, moduleType, memberType, p.Name, "ReturnType", p.ReturnType, idx)
             idx += 1
         End If
+
 
         ' Parameters
         If method.Parameters IsNot Nothing AndAlso method.Parameters.Count > 0 Then
@@ -463,7 +463,7 @@ Public Module modExcelExporter
     ''' </summary>
     Public Sub WriteToExcel(outputPath As String)
         Try
-            LogInfo($"[Excel] Scriu {ExportQueue.Count} linii în {outputPath}...")
+            LogInfo($"[Excel] Writing {ExportQueue.Count} lines in {outputPath}...")
 
             ' Sortează datele
             Dim sortedData = ExportQueue.OrderBy(Function(r) r.ModuleName).ThenBy(Function(r) r.SortOrder).ToList()
@@ -512,7 +512,7 @@ Public Module modExcelExporter
                 package.SaveAs(New FileInfo(outputPath))
             End Using
 
-            LogInfo($"✅ Excel salvat: {outputPath}")
+            LogInfo($"✅ Excel saved to: {outputPath}")
 
         Catch ex As Exception
             LogError("WriteToExcel", ex)
@@ -526,6 +526,26 @@ Public Module modExcelExporter
         Dim dummy As ExportRow = Nothing
         While ExportQueue.TryDequeue(dummy)
         End While
+    End Sub
+
+    Private Sub AddExportRow(queue As ConcurrentQueue(Of ExportRow),
+                             moduleName As String,
+                             moduleType As String,
+                             memberType As String,
+                             methodName As String,
+                             fieldName As String,
+                             fieldValue As String,
+                             sortOrder As Integer)
+        queue.Enqueue(New ExportRow With {
+            .Level0 = moduleName,
+            .Level1 = moduleType,
+            .Level2 = memberType,
+            .Level3 = methodName,
+            .Level4 = fieldName,
+            .Level5 = fieldValue,
+            .ModuleName = moduleName,
+            .SortOrder = sortOrder
+        })
     End Sub
 
 End Module

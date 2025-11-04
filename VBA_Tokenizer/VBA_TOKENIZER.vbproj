@@ -138,15 +138,13 @@
     <Import Include="System.Threading.Tasks" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="analizer.vb" />
     <Compile Include="modExcelExporter.vb" />
     <Compile Include="modExporter.vb" />
     <Compile Include="modFileParser.vb" />
     <Compile Include="modIgnoreList.vb" />
-    <Compile Include="modReferenceResolver.vb" />
-    <Compile Include="modReports.vb" />
     <Compile Include="modCodeParser.vb" />
     <Compile Include="modSerializer.vb" />
+    <Compile Include="modCleanup.vb" />
     <Compile Include="Program.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">

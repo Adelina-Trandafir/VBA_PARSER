@@ -1,12 +1,13 @@
-﻿Imports Microsoft.Office.Interop.Access
+﻿'PROJECT NAME: VBA_TOKENIZER
+'FILE DESCRIPTION: Module pentru exportul codului VBA dintr-o bază de date Access
+'PATH: VBA_TOKENIZER/modExporter.vb
+Imports Microsoft.Office.Interop.Access
 Imports System.IO
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
-Imports VBA_CORE
-Imports VBA_CORE.modTypes
 Imports VBA_CORE.Logger
-Imports VBA_CORE.VBA_CORE
+Imports VBA_CORE
 
 Public Module modExporter
     Private errorFiles As New List(Of String)
@@ -23,7 +24,7 @@ Public Module modExporter
         Try
             app = New Microsoft.Office.Interop.Access.Application()
             app.OpenCurrentDatabase(modGlobals.Global_DBPath)
-            LogInfo("Deschis baza de date Access...")
+            LogInfo("Access database opened...")
 
             Dim folders As New Dictionary(Of String, AcObjectType) From {
                 {"Modules", AcObjectType.acModule},
@@ -60,7 +61,7 @@ Public Module modExporter
                         ExtractBinarySections(outFile, fType)
 
                         count += 1
-                        LogInfo($"   [{count}] {kvp.Key}\{name}")
+                        LogInfo($"   [{count}] {kvp.Key}\{name}", 1)
                     Catch ex As Exception
                         LogError($"Export {kvp.Key}", ex)
                     End Try
@@ -84,7 +85,7 @@ Public Module modExporter
         End Try
 
         sw.Stop()
-        LogInfo($"Export finalizat în {sw.Elapsed.TotalSeconds:N1}s")
+        LogInfo($"Export finalized in {sw.Elapsed.TotalSeconds:N1}s")
     End Sub
 
     ' ==========================================================
@@ -171,7 +172,7 @@ Public Module modExporter
 
             If optIndex = -1 Then
                 File.WriteAllText(headerFile, allText, Encoding.UTF8)
-                LogInfo($"(i) {Path.GetFileName(filePath)} fără Option ... → doar header.")
+                LogInfo($"(i) {Path.GetFileName(filePath)} no code module.")
             Else
                 Dim headerText = String.Join(vbCrLf, lines.Take(optIndex))
                 Dim codeText = String.Join(vbCrLf, {$"'@@{moduleType}"}.Concat(lines.Skip(optIndex)))
