@@ -1,6 +1,6 @@
 ﻿Imports System.Text
 Imports VBA_CORE
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 Imports VBA_VIEWER.VBA_VIEWER
 
 Module RichTextHelpers

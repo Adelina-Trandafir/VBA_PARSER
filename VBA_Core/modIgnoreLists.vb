@@ -187,7 +187,7 @@ Public Module modIgnoreLists
     ' --- Constants / values ---
     ' --- Misc language elements ---
     ReadOnly VbaKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "Public", "Private", "Friend", "Static", "Global", "Dim", "Const",
+        "Public", "Private", "Friend", "Static", "Global", "Dim", "Const", "WithEvents",
         "Declare", "PtrSafe", "Lib", "Alias",
         "Type", "End", "Enum", "Property", "Get", "Let", "Set",
         "Sub", "Function", "Event", "Option", "Explicit", "Base", "Compare",

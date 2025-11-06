@@ -73,7 +73,7 @@
     <Compile Include="modGlobals.vb" />
     <Compile Include="modIgnoreLists.vb" />
     <Compile Include="modRegexHelper.vb" />
-    <Compile Include="modTypes.vb" />
+    <Compile Include="customTypes.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">
       <AutoGen>True</AutoGen>

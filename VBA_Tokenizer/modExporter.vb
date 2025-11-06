@@ -8,6 +8,8 @@ Imports System.Text.RegularExpressions
 Imports System.Threading
 Imports VBA_CORE.Logger
 Imports VBA_CORE
+Imports System.Windows.Forms
+Imports System.Web.UI
 
 Public Module modExporter
     Private errorFiles As New List(Of String)
@@ -162,21 +164,29 @@ Public Module modExporter
         Try
             Dim allText As String = File.ReadAllText(filePath, Encoding.UTF8)
             Dim lines = allText.Split({vbCrLf, vbLf}, StringSplitOptions.None)
+            Dim optIndex As Integer = -1
+            Dim isFormOrReport As Boolean = (moduleType = "Form" Or moduleType = "Report")
 
-            Dim optIndex As Integer = Array.FindIndex(lines, Function(L) L.TrimStart().StartsWith("Option ", StringComparison.OrdinalIgnoreCase))
+            If isFormOrReport Then
+                optIndex = Array.FindIndex(lines, Function(L) L.ToLower().TrimStart().StartsWith("codebehindform", StringComparison.OrdinalIgnoreCase))
+                If optIndex > -1 Then optIndex += 1
+            End If
 
             Dim baseDir = Path.GetDirectoryName(filePath)
             Dim baseName = Path.GetFileNameWithoutExtension(filePath)
             Dim headerFile = Path.Combine(baseDir, baseName & "_header.txt")
             Dim codeFile = Path.Combine(baseDir, baseName & "_code.txt")
 
-            If optIndex = -1 Then
+            If optIndex = -1 AndAlso isFormOrReport Then
                 File.WriteAllText(headerFile, allText, Encoding.UTF8)
                 LogInfo($"(i) {Path.GetFileName(filePath)} no code module.")
-            Else
+            ElseIf isFormOrReport Then
                 Dim headerText = String.Join(vbCrLf, lines.Take(optIndex))
                 Dim codeText = String.Join(vbCrLf, {$"'@@{moduleType}"}.Concat(lines.Skip(optIndex)))
                 File.WriteAllText(headerFile, headerText, Encoding.UTF8)
+                File.WriteAllText(codeFile, codeText, Encoding.UTF8)
+            Else
+                Dim codeText = String.Join(vbCrLf, {$"'@@{moduleType}"}.Concat(lines))
                 File.WriteAllText(codeFile, codeText, Encoding.UTF8)
             End If
 

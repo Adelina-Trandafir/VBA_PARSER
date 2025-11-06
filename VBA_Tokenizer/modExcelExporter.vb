@@ -2,7 +2,7 @@
 Imports System.ComponentModel
 Imports System.IO
 Imports System.Text
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 Imports VBA_CORE
 Imports VBA_CORE.Logger
 Imports OfficeOpenXml
@@ -282,7 +282,7 @@ Public Module modExcelExporter
         End If
     End Sub
 
-    Private Sub ExportControl(moduleName As String, moduleType As String, sectionName As String, ctrl As FormControl, ByRef idx As Integer)
+    Private Sub ExportControl(moduleName As String, moduleType As String, sectionName As String, ctrl As FormReportControl, ByRef idx As Integer)
         ' Control header
         ExportQueue.Enqueue(New ExportRow With {
             .Level0 = moduleName,

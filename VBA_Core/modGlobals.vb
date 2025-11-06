@@ -4,107 +4,74 @@
 Imports System.Reflection.Emit
 Imports System.Runtime.Remoting.Messaging
 Imports System.Threading
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 
 Public Module modGlobals
-    ' ============================================================
-    ' ENUM: TokenType
-    ' Descriere: toate tipurile logice de tokeni din VBA
-    ' ============================================================
+    ''' <summary>
+    ''' Tipuri logice de tokeni (enumerație unificată pentru analizorul VBA).
+    ''' </summary>
     Public Enum TokenTypeEnum
-        ' -----------------------------
-        ' DECLARAȚII (introduc simboluri)
-        ' -----------------------------
-        module_decl                  ' modul, clasă, formă etc.
-        variable_decl                ' Dim / Private / Public
-        constant_decl                ' Const
-        parameter_decl               ' parametru funcție/sub
-        param_decl_api               ' parametru în Declare API
-        function_decl                ' Function ...
-        sub_decl                     ' Sub ...
-        property_get_decl            ' Property Get ...
-        property_let_decl            ' Property Let ...
-        property_set_decl            ' Property Set ...
-        event_decl                   ' Event ...
-        enum_decl                    ' membru Enum
-        type_decl                    ' Type ...
-        type_field_decl              ' câmp în Type
-        declare_function             ' Declare Function ...
-        declare_sub                  ' Declare Sub ...
+        ' === 0️⃣ Generic ===
+        unresolved
+        type_ref
+        self
 
-        ' -----------------------------
-        ' SIMBOLURI REZOLVATE
-        ' -----------------------------
-        variable                     ' variabilă rezolvată
-        constant                     ' constantă rezolvată
-        parameter                    ' parametru rezolvat
-        [Function]                     ' funcție internă
-        subroutine                   ' sub intern
-        property_get                 ' proprietate Get
-        property_let                 ' proprietate Let
-        property_set                 ' proprietate Set
-        event_symbol                 ' eveniment rezolvat
-        enum_type                    ' tip Enum
-        enum_member                  ' membru Enum
-        user_type                    ' tip definit (Type)
-        type_field                   ' câmp în Type
-        form_control                 ' control Access / UserForm
-        form_property                ' proprietate control
-        module_self                  ' instanța Me / modul curent
-        module_symbol                ' simbol de nivel modul
+        ' === 1️⃣ Declarații ===
+        variable_decl
+        constant_decl
+        parameter_decl
+        function_decl
+        sub_decl
+        property_get_decl
+        property_let_decl
+        property_set_decl
+        event_decl
+        declare_function
+        declare_sub
+        type_member_decl
+        enum_member_decl
+        label_decl
+        label_ref
 
-        ' -----------------------------
-        ' REFERINȚE ȘI EXPRESII
-        ' -----------------------------
-        type_ref                     ' referință la un tip
-        object_ref                   ' referință la obiect
-        variable_member              ' membru al unei variabile (obj.Prop)
-        function_call                ' apel funcție
-        property_access              ' acces proprietate
-        method_call                  ' apel metodă
-        with_member                  ' membru din bloc With
-        member_chain                 ' parte din lanț a.b.c
-        index_access                 ' acces cu paranteze (arr(0))
-        unknown_type                 ' tip necunoscut după As
-        unresolved                   ' token nerecunoscut
-        self                         ' token "Me"
+        ' === 2️⃣ Utilizări / referințe ===
+        variable
+        constant
+        parameter
+        [Function]
+        [sub]
+        property_get
+        property_let
+        property_set
+        event_handler
+        variable_member
+        builtin_property
 
-        ' -----------------------------
-        ' BUILT-IN & ACCESS SPECIFIC
-        ' -----------------------------
-        builtin_type                 ' tip VBA (String, Long)
-        builtin_function             ' funcție VBA (Trim, Left)
-        builtin_constant             ' constantă VBA (vbYes)
-        builtin_object               ' obiect VBA (Application, DoCmd)
-        access_function              ' funcție Access (Nz, DLookup)
-        access_object                ' obiect Access (Forms, Reports)
-        builtin_property             ' proprietate built-in (.Name, .Value)
-        vba_keyword                  ' cuvânt cheie (If, End, For)
+        ' === 3️⃣ Tipuri complexe ===
+        enum_type
+        enum_member
+        user_type
+        type_field
 
-        ' -----------------------------
-        ' CONTEXT / STRUCTURĂ / CONTROL
-        ' -----------------------------
-        event_handler                ' procedură de eveniment
-        label                        ' etichetă (MyLabel:)
-        line_continuation            ' linie cu _
-        comment                      ' comentariu '
-        preprocessor                 ' #If, #Const etc.
-        block_start                  ' început bloc (If, For)
-        block_end                    ' sfârșit bloc (End If, Next)
-        with_context                 ' context activ With
-        error_handler                ' On Error / Resume
-        call_statement               ' apel explicit Call
+        ' === 4️⃣ Built-in și Access ===
+        builtin_type
+        builtin_function
+        builtin_object
+        builtin_constant
+        access_object
+        access_function
+        access_property
+        access_event
 
-        ' -----------------------------
-        ' ERORI / DIAGNOSTICE
-        ' -----------------------------
-        syntax_error                 ' linie invalidă
-        invalid_token                ' token invalid
-        ambiguous_ref                ' referință ambiguă
-        shadowed_symbol              ' simbol mascat
-        duplicate_decl               ' dublă declarație
+        ' === 5️⃣ Altele ===
+        vba_keyword
+        external_prefix
+
+        ' === 6️⃣ Access Form/Report Objects ===
+        access_control
+        access_section
+        access_form
+        access_report
     End Enum
-
 
     ' ===============================
     ' 🧰 CONFIG RUNTIME
@@ -118,4 +85,5 @@ Public Module modGlobals
     Public Property Global_UseParallel As Boolean = False
     Public Property Global_VerboseLevel As Integer = 1  ' 0=quiet,1=normal,2=verbose
     Public Property Global_ExportDir As String = "C:\ExportVBA"
+    Public Property ExtendedVerbose As Boolean = False
 End Module

@@ -3,7 +3,8 @@
 'PATH: VBA_TOKENIZER/modIgnoreList.vb
 
 Imports System.Text.RegularExpressions
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
+Imports VBA_CORE.modContainers
 
 Public Module VBAIgnoreList
 

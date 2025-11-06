@@ -4,10 +4,10 @@
 Imports System.Reflection
 Imports System.Windows.Threading
 Imports VBA_CORE
-Imports VBA_CORE.modTypes
-Imports VBA_MethodInfo = VBA_CORE.modTypes.MethodInfo
-Imports VBA_PropertyInfo = VBA_CORE.modTypes.PropertyInfo
-Imports VBA_FunctionInfo = VBA_CORE.modTypes.FunctionInfo
+Imports VBA_CORE.customTypes
+Imports VBA_MethodInfo = VBA_CORE.customTypes.MethodInfo
+Imports VBA_PropertyInfo = VBA_CORE.customTypes.PropertyInfo
+Imports VBA_FunctionInfo = VBA_CORE.customTypes.FunctionInfo
 
 Namespace VBA_VIEWER
     Module TreeHelpers
@@ -216,7 +216,7 @@ Namespace VBA_VIEWER
             For Each kvp In declares
                 Dim m = kvp.Value
                 Dim mNode = New TreeViewItem With {.Header = $"🔹 {m.Name}", .Tag = m}
-                AddTokensNode(mNode, m.TokenizedLine?.Tokens)
+                AddTokensNode(mNode, m.ParsedLine?.Tokens)
                 dNode.Items.Add(mNode)
             Next
             parent.Items.Add(dNode)
@@ -285,7 +285,7 @@ Namespace VBA_VIEWER
                 Dim mSub = New TreeViewItem With {.Header = $"🔸 {method.Name}", .Tag = method}
 
                 ' Tokens (header line)
-                AddTokensNode(mSub, method.TokenizedLine?.Tokens)
+                AddTokensNode(mSub, method.ParsedLine?.Tokens)
 
                 ' Parameters
                 AddParamNodes(mSub, "🧩 Parameters", method.Parameters)
@@ -332,7 +332,7 @@ Namespace VBA_VIEWER
                 End If
 
                 ' Tokens (header line)
-                AddTokensNode(prNode, prop.TokenizedLine?.Tokens)
+                AddTokensNode(prNode, prop.ParsedLine?.Tokens)
 
                 ' Parameters
                 AddParamNodes(prNode, "🧩 Parameters", prop.Parameters)
@@ -374,7 +374,7 @@ Namespace VBA_VIEWER
                 End If
 
                 ' Tokens (header line)
-                AddTokensNode(fnNode, func.TokenizedLine?.Tokens)
+                AddTokensNode(fnNode, func.ParsedLine?.Tokens)
 
                 ' Parameters
                 AddParamNodes(fnNode, "🧩 Parameters", func.Parameters)

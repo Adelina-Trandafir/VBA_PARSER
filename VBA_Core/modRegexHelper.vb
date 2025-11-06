@@ -100,4 +100,9 @@ Public Class RegexCache
     Public Shared ReadOnly RxEnumMember As New Regex("^(?:\[?(?<name>[A-Za-z_]\w*|\[[^\]]+\])\]?)(?:\s*=\s*(?<value>[-+]?(?:&H[0-9A-Fa-f]+|\d+)))?", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Public Shared ReadOnly RxTypeMember As New Regex("^(?<name>[A-Za-z_]\w*)\s+As\s+(?<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\([^)]*\))?)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 
+    ' Detectie LABEL-uri de linie (GoTo s)
+    Public Shared ReadOnly RxCodeLabel As New Regex("^[A-Za-z_]\w*:$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    ' Designer
+    Public Shared ReadOnly RxDesigner As New Regex("(""(?:[^""\\]|\\.)*""|(!=)|[^\s""]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled Or RegexOptions.Singleline)
 End Class

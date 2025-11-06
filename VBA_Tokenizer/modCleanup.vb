@@ -1,5 +1,5 @@
 ﻿Imports VBA_CORE
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 
 Module modCleanup
     ''' <summary>
@@ -66,6 +66,7 @@ Module modCleanup
         Next
 
         ' === Curățare linii de la nivel de modul ===
+
         For Each line In modObj.Lines
             line.WithBlockContext = Nothing
             For Each t In line.Tokens

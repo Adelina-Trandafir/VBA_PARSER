@@ -4,10 +4,12 @@
 Imports System.ComponentModel
 Imports System.Text
 Imports VBA_CORE.Logger
-Imports VBA_CORE.modTypes
-Imports VBA_MethodInfo = VBA_CORE.modTypes.MethodInfo
-Imports VBA_PropertyInfo = VBA_CORE.modTypes.PropertyInfo
-Imports VBA_FunctionInfo = VBA_CORE.modTypes.FunctionInfo
+Imports VBA_CORE.customTypes
+Imports VBA_CORE.modContainers
+
+Imports VBA_MethodInfo = VBA_CORE.customTypes.MethodInfo
+Imports VBA_PropertyInfo = VBA_CORE.customTypes.PropertyInfo
+Imports VBA_FunctionInfo = VBA_CORE.customTypes.FunctionInfo
 
 Namespace VBA_VIEWER
     Partial Public Class MainWindow
@@ -92,9 +94,13 @@ Namespace VBA_VIEWER
                     sb.AppendLine($"=Properties: {If(m.Properties?.Count, 0)}")
                     sb.AppendLine($"=Constants: {If(m.Constants?.Count, 0)}")
                     sb.AppendLine($"=Declares: {If(m.Declares?.Count, 0)}")
-                    For Each l In m.Lines
-                        countTokens += l.Tokens.Count
-                    Next
+                    If m.Lines IsNot Nothing Then
+                        For Each l In m.Lines
+                            countTokens += l.Tokens.Count
+                        Next
+                    End If
+
+
                     If countTokens > 0 Then sb.AppendLine($"=Tokens:{countTokens}")
 
                     RichTextHelpers.WriteLinesToRTFDocument(Me, sb)

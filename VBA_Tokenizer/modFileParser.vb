@@ -8,7 +8,7 @@ Imports System.Text.RegularExpressions
 Imports System.Threading
 Imports VBA_CORE
 Imports VBA_CORE.Logger
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 
 Module modFileParser
     ' ==========================================================
@@ -46,7 +46,7 @@ Module modFileParser
                 Next
             End If
 
-            'LogInfo($"   → Total: {GlobalModules.Count + GlobalFormsReports.Count} surse încărcate.")
+            LogInfoLocal($"   → Total: {GlobalModules.Count + GlobalFormsReports.Count} surse încărcate.", 1)
         Catch ex As Exception
             LogError("CreateObjectsFromFiles", ex)
         End Try
@@ -102,7 +102,14 @@ Module modFileParser
                     .CodeContent = codeText,
                     .FilePath = cf
                 })
-            Else
+            ElseIf detectedType = "Form" Then
+                GlobalFormsReports.TryAdd(key, New FormReportContainer With {
+                    .Name = modName,
+                    .Type = detectedType,
+                    .CodeContent = codeText,
+                    .FilePath = cf
+                })
+            ElseIf detectedType = "Report" Then
                 GlobalFormsReports.TryAdd(key, New FormReportContainer With {
                     .Name = modName,
                     .Type = detectedType,
@@ -128,289 +135,259 @@ Module modFileParser
         Dim headerFiles = Directory.GetFiles(modGlobals.Global_ExportDir, "*_header.txt", SearchOption.AllDirectories).ToList()
 
         ' Filtrare pentru Forms și Reports
-        Dim validHeaders = headerFiles.Where(Function(hf)
-                                                 Dim dirType = New DirectoryInfo(Path.GetDirectoryName(hf)).Name
-                                                 Return dirType.Equals("Forms", StringComparison.OrdinalIgnoreCase) OrElse
-                                                        dirType.Equals("Reports", StringComparison.OrdinalIgnoreCase)
-                                             End Function).ToList()
+        Dim validFormHeaders = headerFiles.Where(Function(hf)
+                                                     Dim dirType = New DirectoryInfo(Path.GetDirectoryName(hf)).Name
+                                                     Return dirType.Equals("Forms", StringComparison.OrdinalIgnoreCase)
+                                                 End Function).ToList()
 
+        Dim validReportHeaders = headerFiles.Where(Function(hf)
+                                                       Dim dirType = New DirectoryInfo(Path.GetDirectoryName(hf)).Name
+                                                       Return dirType.Equals("Reports", StringComparison.OrdinalIgnoreCase)
+                                                   End Function).ToList()
         ' Opțiuni de paralelizare
         Dim opts As New ParallelOptions With {.MaxDegreeOfParallelism = Environment.ProcessorCount}
 
         ' Procesare paralelă sau secvențială
         If modGlobals.Global_UseParallel Then
-            Parallel.ForEach(validHeaders, opts, Sub(hf) ProcessSingleHeaderFile(hf))
+            Parallel.ForEach(validFormHeaders, opts, Sub(hf) ProcessFormReportHeader(hf, "Form"))
+            Parallel.ForEach(validReportHeaders, opts, Sub(hf) ProcessFormReportHeader(hf, "Report"))
         Else
-            For Each hf In validHeaders
-                ProcessSingleHeaderFile(hf)
+            For Each hf In validFormHeaders
+                ProcessFormReportHeader(hf, "Form")
+            Next
+            For Each hf In validReportHeaders
+                ProcessFormReportHeader(hf, "Report")
             Next
         End If
 
         LogInfoLocal($" parsed sucessfully.", 1)
     End Sub
 
-    ' ==========================================================
-    '  PROCESARE UN SINGUR FIȘIER HEADER (rulează paralel)
-    ' ==========================================================
-    Private Sub ProcessSingleHeaderFile(hf As String)
+    Public Function PreProcessFormReportHeader(lines() As String) As FormReportDesigner
+        Dim root As New FormReportDesigner()
+        Dim stack As New Stack(Of FormReportDesigner)()
+        stack.Push(root)
+
+        Dim workingLines As New List(Of String)(lines)
+        Dim i As Integer = 0
+        Dim firstToken As String = ""
+        Dim secondToken As String = ""
+
+        ' Obiect temporar pentru proprietăți multi-linie
+        Dim tempKey As String = Nothing
+        Dim tempValues As List(Of String) = Nothing
+
+        While i < workingLines.Count
+            Dim line As String = workingLines(i)
+            If line.Contains("CodeBehindForm") Then Exit While
+
+            Dim trimmed As String = line.Trim()
+
+            If Not String.IsNullOrWhiteSpace(trimmed) Then
+                Dim matches As MatchCollection = RegexCache.RxDesigner.Matches(trimmed)
+
+                If matches.Count > 0 Then
+                    firstToken = matches(0).Value
+                    secondToken = ""
+
+                    If matches.Count = 3 Then
+                        secondToken = matches(2).Value
+                    ElseIf matches.Count = 2 Then
+                        secondToken = matches(1).Value
+                    End If
+
+                    'Debug.Print($"{firstToken}:{secondToken}")
+
+                    ' BEGIN e primul token → creează copil nou
+                    If firstToken.Equals("Begin", StringComparison.OrdinalIgnoreCase) Then
+                        Dim newNode As New FormReportDesigner() With {.RawName = secondToken}
+                        If String.IsNullOrEmpty(newNode.Name) Then newNode.RawName = $"Unnamed_{stack.Peek().Children.Count}"
+                        If secondToken.Equals("report", StringComparison.CurrentCultureIgnoreCase) Or secondToken.Equals("form", StringComparison.CurrentCultureIgnoreCase) Then
+                            newNode.IsControl = True
+                            newNode.IsSection = False
+                        End If
+                        stack.Peek().Children.Add(newNode)
+                        stack.Push(newNode)
+
+                    ElseIf firstToken.Equals("End", StringComparison.OrdinalIgnoreCase) Then
+                        ' finalizează proprietate multi-linie
+                        If tempKey IsNot Nothing AndAlso tempValues IsNot Nothing Then
+                            stack.Peek().Properties.Add(tempKey, tempValues.ToArray())
+                            tempKey = Nothing
+                            tempValues = Nothing
+                        ElseIf stack.Count > 1 Then
+                            stack.Pop()
+                        End If
+
+                    Else
+                        ' Dacă suntem în proprietate multi-linie, adaugă linia
+                        If tempKey IsNot Nothing AndAlso tempValues IsNot Nothing Then
+                            tempValues.Add(trimmed)
+                        ElseIf firstToken.Trim().StartsWith(Chr(34)) AndAlso firstToken.EndsWith(Chr(34)) Then
+                            If stack.Peek().Properties.Count > 0 Then
+                                stack.Peek().Properties.AddLineToProperty(trimmed)
+                            End If
+                        Else
+                            ' Proprietate nouă
+                            Dim equalIndex As Integer = trimmed.IndexOf("="c)
+
+                            If equalIndex > 0 Then
+                                Dim key As String = trimmed.Substring(0, equalIndex).Trim()
+                                Dim value As String = trimmed.Substring(equalIndex + 1).Trim()
+
+                                ' Proprietate multi-linie?
+                                If value.Equals("Begin", StringComparison.OrdinalIgnoreCase) Then
+                                    tempKey = key
+                                    tempValues = New List(Of String)()
+                                Else
+                                    stack.Peek().Properties.Add(key, {value})
+                                End If
+                            Else
+                                stack.Peek().Properties.Add(trimmed, {})
+                            End If
+                        End If
+                    End If
+                End If
+            End If
+            i += 1
+        End While
+        Debug.Print(root.GetAllControls.Count)
+        Return root
+    End Function
+
+    ''' <summary>
+    ''' Parsează un fișier "_header.txt" de raport și construiește atât:
+    ''' 1️⃣ arborele complet FormReportDesigner (root)
+    ''' 2️⃣ containerul compatibil ReportContainer (Sections + Controls)
+    ''' </summary>
+    Private Sub ProcessFormReportHeader(hf As String, objType As String)
         Try
             Dim dirType = New DirectoryInfo(Path.GetDirectoryName(hf)).Name
-            Dim objectType As String = IIf(dirType = "Forms", "Form", "Report")
-            Dim formName = Path.GetFileNameWithoutExtension(hf).Replace("_header", "")
-            Dim key = String.Join(":", formName, objectType)
+            Dim formOrReportName = Path.GetFileNameWithoutExtension(hf).Replace("_header", "")
+            Dim key = $"{formOrReportName}:{objType}"
+            Dim lines = File.ReadAllLines(hf, Encoding.UTF8)
 
-            ' Obține sau creează container
+            ' === 1️⃣ Creează arborele logic FormReportDesigner ===
+            Dim root As FormReportDesigner = PreProcessFormReportHeader(lines)
+
+            ' === 2️⃣ Stochează arborele brut ===
+            GlobalDesigners.TryAdd(key, root)
+
+            ' === 3️⃣ Creează containerul tradițional ===
             Dim fci As FormReportContainer = Nothing
             If Not GlobalFormsReports.TryGetValue(key, fci) Then
                 fci = New FormReportContainer With {
                     .FilePath = hf,
-                    .Name = formName,
-                    .Type = objectType
+                    .Name = formOrReportName,
+                    .Type = objType,
+                    .DesignerContainer = root.GetControl(objType)
                 }
                 GlobalFormsReports.TryAdd(key, fci)
             End If
 
-            ' Variabile locale de stare pentru parsing (thread-safe)
-            Dim inControlBlock As Boolean = False
-            Dim controlDepth As Integer = 0
-            Dim stack As New Stack(Of (Type As String, Name As String, Body As List(Of String), Sec As FormSection))()
-            Dim ignorePrtBlock As Boolean = False
+            ' === 4️⃣ Propietăți generale de raport ===
+            fci.DesignerContainer = root.GetControl(objType, True)
+            fci.RecordSource = fci.DesignerContainer.GetProperty("RecordSource", True)
+            fci.Tag = fci.DesignerContainer.GetProperty("Tag", True, vbCrLf)
 
-            ' Cache regex-uri
-            Dim rxSectionType = RegexCache.RxSectionType
-            Dim rxFormOrReport = RegexCache.RxFormOrReport
-            Dim rxPrtBegin = RegexCache.RxBeginPrtForm
+            Dim designerEvents = fci.DesignerContainer.GetAllPropertiesByValue("[Event Procedure]")
 
-            Dim lines = File.ReadAllLines(hf, Encoding.UTF8)
+            If designerEvents.Count > 0 Then
+                For Each prp In designerEvents
+                    Dim evt As New EventSet With {
+                        .EventName = prp.Key,
+                        .HandlerString = fci.DesignerContainer.Name,
+                        .RefObject = fci,
+                        .RefType = fci.Type
+                    }
 
-            For Each raw In lines
-                Dim L = raw.Trim()
-                If L = "" Then Continue For
+                    fci.EventSets.Add(Strings.Join({fci.DesignerContainer.Name, evt.EventName}, "_"), evt)
+                Next
+            End If
 
-                ' ===== ignoră complet blocurile Prt... =====
-                If ignorePrtBlock Then
-                    If L.Equals("End", StringComparison.OrdinalIgnoreCase) Then
-                        ignorePrtBlock = False
-                        LogInfoLocal("End of Prt... block", 2)
+            ' === 5️⃣ Construiește toate secțiunile și controalele din arbore ===
+            For Each secNode In fci.DesignerContainer.GetAllSections 'GetAllControls().Where(Function(f) f.IsSection)
+                ' 5.1 Creează sau recuperează secțiunea asociată
+                Dim sec As FormReportSection = Nothing
+                If secNode IsNot Nothing Then
+                    Dim secName As String = secNode.GetProperty("Name")
+                    If String.IsNullOrEmpty(secName) Then secName = secNode.RawName
+
+                    sec = fci.Sections.FirstOrDefault(Function(s) s.Name = secName)
+                    If sec Is Nothing Then
+                        sec = New FormReportSection With {
+                            .Name = secName,
+                            .Type = secNode.RawName,
+                            .Parent = fci,
+                            .DesignerControl = secNode
+                        }
+                        fci.Sections.Add(sec)
                     End If
-                    Continue For
-                End If
-                If rxPrtBegin.Matches(L).Count > 0 Then
-                    ignorePrtBlock = True
-                    LogInfoLocal($"Prt Block {rxPrtBegin.Matches(L).Item(0).Groups(1).Value}: {L}", 2)
-                    Continue For
                 End If
 
-                ' ===== dacă suntem în interiorul unui control =====
-                If inControlBlock Then
-                    stack.Peek().Body.Add(L)
-
-                    If L.StartsWith("Begin ", StringComparison.OrdinalIgnoreCase) Then
-                        controlDepth += 1
-                        LogInfoLocal($"Nested Begin ({controlDepth}): {L}", 2)
-                        pCurrentControl_FileParser.Value = stack.Peek().Name
-
-                    ElseIf L.Equals("End", StringComparison.OrdinalIgnoreCase) Then
-                        controlDepth -= 1
-                        If controlDepth <= 0 Then
-                            inControlBlock = False
-                            pCurrentControl_FileParser.Value = ""
-
-                            ' finalizează controlul
-                            Dim controlBlock = stack.Pop()
-                            Dim ctrlType As String = controlBlock.Type
-                            Dim parentSec As FormSection = controlBlock.Sec
-                            Dim ctrl = New FormControl With {.Type = ctrlType, .Section = parentSec}
-
-                            ParseSingleControl(ctrl, controlBlock.Body, fci)
-
-                            ' adaugă controlul în părinte
-                            If parentSec IsNot Nothing Then
-                                parentSec.Controls.Add(ctrl)
-                                ctrl.ParentSection = parentSec.Name
-                            End If
-
-                            ' adaugă în lista globală dacă nu există deja
-                            If Not fci.Controls.Any(Function(c) c.Name.Equals(ctrl.Name, StringComparison.OrdinalIgnoreCase)) Then
-                                fci.Controls.Add(ctrl)
-                            End If
-
-                            LogInfoLocal($"Parsed Control Finished", 2)
-                        End If
-                    End If
-
-                    Continue For
+                Dim sectionEvents = sec.DesignerControl.GetAllPropertiesByValue("[Event Procedure]")
+                If sectionEvents.Count > 0 Then
+                    For Each prp In sectionEvents
+                        Dim evt As New EventSet With {
+                            .EventName = prp.Key,
+                            .HandlerString = sec.Name,
+                            .RefType = "Section",
+                            .RefObject = sec
+                        }
+                        fci.EventSets.Add(Strings.Join({sec.Name, evt.EventName}, "_"), evt)
+                    Next
                 End If
 
-                ' ===== Begin ... =====
-                If L.StartsWith("Begin ", StringComparison.OrdinalIgnoreCase) Then
-                    Dim parts = L.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
-                    Dim t As String = If(parts.Length > 1, parts(1), "")
-                    Dim n As String = If(parts.Length > 2, parts(2), "")
-                    Dim parentSec As FormSection = If(stack.Count > 0, stack.Peek().Sec, Nothing)
+                For Each ctrlNode In secNode.GetAllControls
+                    ' 5.2 Creează controlul propriu-zis
+                    Dim ctrl As New FormReportControl With {
+                        .Type = ctrlNode.RawName,
+                        .Name = ctrlNode.GetProperty("Name"),
+                        .ControlSource = ctrlNode.GetProperty("ControlSource"),
+                        .RecordSource = ctrlNode.GetProperty("RecordSource", True),
+                        .RowSource = ctrlNode.GetProperty("RowSource"),
+                        .SourceObject = ctrlNode.GetProperty("SourceObject"),
+                        .Caption = ctrlNode.GetProperty("Caption"),
+                        .Section = sec,
+                        .DesignerControl = ctrlNode
+                    }
 
-                    If rxFormOrReport.IsMatch(t) Then
-                        stack.Push((t, formName, New List(Of String), Nothing))
-                        LogInfoLocal($"Form/Report block.", 2)
+                    sec.Controls.Add(ctrl)
+                    ctrl.ParentSection = sec.Name
+                    fci.Controls.Add(ctrl)
 
-                    ElseIf rxSectionType.IsMatch(t) Then
-                        Dim secName As String = n
-                        Dim fs As New FormSection With {.Type = t, .Name = secName, .Parent = fci}
-                        fci.Sections.Add(fs)
-                        stack.Push((t, secName, New List(Of String), fs))
-                        LogInfoLocal($"Section block: {t} - {secName}", 2)
+                    Dim controlEvents = ctrl.DesignerControl.GetAllPropertiesByValue("[Event Procedure]")
 
-                    ElseIf t <> "" Then
-                        stack.Push((t, "", New List(Of String), parentSec))
-                        inControlBlock = True
-                        controlDepth = 1
-                        pCurrentControl_FileParser.Value = t
+                    If controlEvents.Count > 0 Then
+                        For Each prp In controlEvents
+                            Dim evt As New EventSet With {
+                                .EventName = prp.Key,
+                                .HandlerString = ctrl.Name,
+                                .RefObject = ctrl,
+                                .RefType = "Control"
+                            }
 
-                        LogInfoLocal($"Control block started", 2)
-                    Else
-                        stack.Push(("(Group)", "", New List(Of String), parentSec))
+                            fci.EventSets.Add(Strings.Join({ctrl.Name, evt.EventName}, "_"), evt)
+                        Next
                     End If
 
-                    Continue For
-                End If
-
-                ' ===== End =====
-                If L.Equals("End", StringComparison.OrdinalIgnoreCase) Then
-                    If stack.Count = 0 Then Continue For
-                    Dim block = stack.Pop()
-                    Dim blockText As String = String.Join(vbCrLf, block.Body)
-
-                    If rxFormOrReport.IsMatch(block.Type) Then
-                        Dim mTag = RegexCache.RxTag.Match(blockText)
-                        Dim mRs = RegexCache.RxRecSrc.Match(blockText)
-                        If mTag.Success Then fci.Tag = CleanPropValue(mTag.Groups(1).Value)
-                        If mRs.Success Then fci.RecordSource = CleanPropValue(mRs.Groups(1).Value)
-                    End If
-
-                    If stack.Count > 0 Then
-                        stack.Peek().Body.AddRange(block.Body)
-                    End If
-
-                    Continue For
-                End If
-
-                ' ===== Linii obișnuite =====
-                If stack.Count > 0 Then
-                    stack.Peek().Body.Add(L)
-                End If
+                Next
             Next
 
-            LogInfoLocal($"Parsed header successfully.", 1)
+            LogInfoLocal($"Parsed report header: {formOrReportName}", 1)
 
         Catch ex As Exception
-            LogError($"ProcessSingleHeaderFile({Path.GetFileName(hf)})", ex)
-            'ConditionalStop()  ' Stop doar în modul secvențial (debug)
+            LogError($"ProcessReportHeader({Path.GetFileName(hf)})", ex)
         End Try
     End Sub
 
-    ' ==========================================================
-    '  HELPER: PARSE SINGLE CONTROL
-    ' ==========================================================
-    Private Sub ParseSingleControl(ByRef fc As FormControl, block As List(Of String), Optional fci As FormReportContainer = Nothing)
-        Dim i As Integer = 0
-        While i < block.Count
-            Dim ln As String = block(i)
-
-            ' === Detectează un bloc "Begin Label ... End" imbricat în control ===
-            If Regex.IsMatch(ln, "^(?im)^\s*Begin\s+Label\b") Then
-                Dim depth As Integer = 1
-                Dim labelLines As New List(Of String)
-
-                i += 1 ' intrăm după linia "Begin Label"
-                While i < block.Count AndAlso depth > 0
-                    Dim l2 As String = block(i)
-
-                    If Regex.IsMatch(l2, "^(?im)^\s*Begin\b") Then
-                        depth += 1
-                        i += 1
-                        Continue While
-                    End If
-
-                    If Regex.IsMatch(l2, "^(?im)^\s*End\s*$") Then
-                        depth -= 1
-                        i += 1
-                        If depth = 0 Then Exit While
-                        Continue While
-                    End If
-
-                    labelLines.Add(l2.Trim())
-                    i += 1
-                End While
-
-                ' Construiește sub-labelul
-                If fc.SubLabel Is Nothing Then
-                    Dim lbl As New FormControl With {.Type = "Label", .Section = fc.Section}
-                    ParseSingleControl(lbl, labelLines, fci)
-                    fc.SubLabel = lbl
-
-                    ' adaugă labelul în secțiune
-                    If fc.Section IsNot Nothing AndAlso Not fc.Section.Controls.Any(Function(c) c.Name.Equals(lbl.Name, StringComparison.OrdinalIgnoreCase)) Then
-                        fc.Section.Controls.Add(lbl)
-                    End If
-
-                    ' adaugă labelul în lista globală
-                    If fci IsNot Nothing AndAlso Not fci.Controls.Any(Function(c) c.Name.Equals(lbl.Name, StringComparison.OrdinalIgnoreCase)) Then
-                        fci.Controls.Add(lbl)
-                    End If
-                End If
-
-                Continue While
-            End If
-
-            ' === Parsare proprietăți ale controlului curent ===
-            Dim m As Match
-
-            m = Regex.Match(ln, "(?im)^\s*Name\s*=\s*""?([^""]+)""?")
-            If m.Success Then fc.Name = m.Groups(1).Value.Trim()
-
-            m = Regex.Match(ln, "(?im)^\s*ControlSource\s*=\s*(.+)$")
-            If m.Success Then fc.ControlSource = m.Groups(1).Value.Trim()
-
-            m = Regex.Match(ln, "(?im)^\s*RecordSource\s*=\s*(.+)$")
-            If m.Success Then fc.RecordSource = m.Groups(1).Value.Trim()
-
-            m = Regex.Match(ln, "(?im)^\s*RowSource\s*=\s*(.+)$")
-            If m.Success Then fc.RowSource = m.Groups(1).Value.Trim()
-
-            m = Regex.Match(ln, "(?im)^\s*SourceObject\s*=\s*(.+)$")
-            If m.Success Then fc.SourceObject = m.Groups(1).Value.Trim()
-
-            m = Regex.Match(ln, "(?im)^\s*Caption\s*=\s*(.+)$")
-            If m.Success Then fc.Caption = m.Groups(1).Value.Trim()
-
-            ' evenimente [Event Procedure]
-            Dim rxEvt As New Regex("(?im)^\s*(On\w+)\s*=\s*""\[Event Procedure\]""")
-            For Each em As Match In rxEvt.Matches(ln)
-                fc.Caption &= $" [Evt:{em.Groups(1).Value}]"
-            Next
-
-            i += 1
-        End While
-    End Sub
-
-    ' ==========================================================
-    '  HELPER: CLEAN PROPERTY VALUE
-    ' ==========================================================
-    Private Function CleanPropValue(v As String) As String
-        Dim s = v.Trim()
-        If s.StartsWith("""") AndAlso s.EndsWith("""") AndAlso s.Length >= 2 Then
-            s = s.Substring(1, s.Length - 2)
-        End If
-        Return s.Trim()
-    End Function
-
     Private Sub LogInfoLocal(ByVal msg As String, level As Integer, Optional force As Boolean = False)
         If pCurrentControl_FileParser.Value <> "" Then
-            msg = $"({pCurrentType_FileParser.Value}) [{pCurrentModule_FileParser.Value}]![{pCurrentControl_FileParser.Value}] : {msg}"
+            msg &= $"({pCurrentType_FileParser.Value}) [{pCurrentModule_FileParser.Value}]![{pCurrentControl_FileParser.Value}] : {msg}"
         Else
-            msg = $"({pCurrentType_FileParser.Value}) [{pCurrentModule_FileParser.Value}] : {msg}"
+            msg &= $"({pCurrentType_FileParser.Value}) [{pCurrentModule_FileParser.Value}] : {msg}"
         End If
 
-        LogInfo(msg, level, force)
+        LogInfo("[FILEPARSER]" & msg, level, force)
     End Sub
 End Module

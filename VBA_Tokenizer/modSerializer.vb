@@ -7,7 +7,8 @@ Imports System.IO.Compression
 Imports System.Runtime.Serialization.Formatters.Binary
 Imports System.Threading
 Imports VBA_CORE.Logger
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
+Imports VBA_CORE.modContainers
 Imports VBA_CORE
 
 Public Module modSerializer

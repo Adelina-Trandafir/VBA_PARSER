@@ -96,7 +96,23 @@ Public Module modAccessPropertyCatalog
     ' ==================================================
     Private ReadOnly CommonEvents As String() = {
         "OnClick", "OnDblClick", "OnMouseDown", "OnMouseUp", "OnMouseMove",
-        "OnKeyDown", "OnKeyUp", "OnKeyPress", "OnEnter", "OnExit", "OnGotFocus", "OnLostFocus", "AfterUpdate", "BeforeUpdate", "OnChange"
+        "OnKeyDown", "OnKeyUp", "OnKeyPress", "OnEnter", "OnExit", "OnGotFocus", "OnLostFocus",
+        "AfterUpdate", "BeforeUpdate", "OnChange"
+    }
+
+    ' ==================================================
+    ' Control-type specific event map
+    ' ==================================================
+    Private ReadOnly CtrlEvents As New Dictionary(Of String, String())(StringComparer.OrdinalIgnoreCase) From {
+        {"CommandButton", {"Click", "DblClick"}},
+        {"TextBox", {"AfterUpdate", "BeforeUpdate", "Change", "GotFocus", "LostFocus"}},
+        {"ComboBox", {"AfterUpdate", "BeforeUpdate", "Change", "Enter", "Exit"}},
+        {"ListBox", {"AfterUpdate", "BeforeUpdate", "Enter", "Exit"}},
+        {"CheckBox", {"Click", "AfterUpdate"}},
+        {"OptionButton", {"Click", "AfterUpdate"}},
+        {"ToggleButton", {"Click", "AfterUpdate"}},
+        {"Form", {"Load", "Open", "Resize", "Unload", "Close", "Activate", "Deactivate"}},
+        {"Report", {"Open", "Close", "Activate", "Deactivate"}}
     }
 
     ' ===========================
@@ -173,6 +189,18 @@ Public Module modAccessPropertyCatalog
     ' Întoarce True dacă numele e proprietate validă pentru Form
     Public Function TryIsKnownFormProperty(propName As String) As Boolean
         Return GetFormProperties().Any(Function(p) String.Equals(p, propName, StringComparison.OrdinalIgnoreCase))
+    End Function
+
+    ' Întoarce True dacă evenimentul e cunoscut pentru un tip de control
+    Public Function TryIsKnownControlEvent(ctrlType As String, evtName As String) As Boolean
+        Return CtrlEvents.ContainsKey(ctrlType) AndAlso
+               CtrlEvents(ctrlType).Any(Function(e) e.Equals(evtName, StringComparison.OrdinalIgnoreCase))
+    End Function
+
+    ' Întoarce True dacă evenimentul e cunoscut pentru Form sau Report
+    Public Function TryIsKnownFormEvent(evtName As String) As Boolean
+        Return CtrlEvents("Form").Contains(evtName, StringComparer.OrdinalIgnoreCase) OrElse
+               CtrlEvents("Report").Contains(evtName, StringComparer.OrdinalIgnoreCase)
     End Function
 
     ' Încearcă să determine dacă un nume de membru e eveniment (ex. pentru legături OnClick = "=Macro()" sau „[Event Procedure]”)

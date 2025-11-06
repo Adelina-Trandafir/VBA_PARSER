@@ -36,12 +36,27 @@
 
             <DockPanel Margin="0,5,0,0">
                 <!-- Dreapta -->
-                <StackPanel x:Name="LogOptions" Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
-                    <TextBlock Text="Logger Verbosity:" Margin="0,0,10,0"/>
-                    <RadioButton x:Name="rbQuiet" Content="Silent" GroupName="Verbose"/>
-                    <RadioButton x:Name="rbNormal" Content="Normal" GroupName="Verbose" IsChecked="True" Margin="10,0,0,0"/>
-                    <RadioButton x:Name="rbVerbose" Content="Verbose" GroupName="Verbose" Margin="10,0,0,0"/>
-                </StackPanel>
+                <DockPanel x:Name="LogOptions" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <TextBlock Text="Logger Verbosity:" Margin="0,0,10,0" VerticalAlignment="Center"/>
+
+                    <!-- grup Radio + Extended pe același rând -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <RadioButton x:Name="rbQuiet" Content="Silent" GroupName="Verbose" VerticalAlignment="Center"/>
+                        <RadioButton x:Name="rbNormal" Content="Normal" GroupName="Verbose" IsChecked="True" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                        <RadioButton x:Name="rbVerbose" Content="Verbose" GroupName="Verbose" Margin="10,0,0,0"
+                     Checked="Verbose_Checked" Unchecked="Verbose_Unchecked" VerticalAlignment="Center"/>
+
+                        <CheckBox x:Name="chkExtendedVerbose"
+                  Content="Extended Verbose"
+                  Margin="10,0,0,0"
+                  VerticalAlignment="Center"
+                  Visibility="Hidden"
+                  ToolTip="Writes additional internal details directly to the log file. 
+Be aware: this will slow down processing and can generate very large log files for big projects."
+                  IsEnabled="False"/>
+                    </StackPanel>
+                </DockPanel>
+
 
                 <!-- Stânga -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

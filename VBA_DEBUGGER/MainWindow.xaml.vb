@@ -3,7 +3,7 @@ Imports System.Reflection
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports VBA_CORE
-Imports VBA_CORE.modTypes
+Imports VBA_CORE.customTypes
 Imports VBA_TOKENIZER  ' Adăugat conform cererii tale
 
 Class MainWindow
@@ -33,8 +33,8 @@ Class MainWindow
 
     Private Sub LoadGlobalCollections()
         Dim items As New List(Of GlobalItem) From {
-            New GlobalItem With {.Name = "GlobalModules", .Data = modTypes.GlobalModules},
-            New GlobalItem With {.Name = "GlobalFormsReports", .Data = modTypes.GlobalFormsReports}
+            New GlobalItem With {.Name = "GlobalModules", .Data = customTypes.GlobalModules},
+            New GlobalItem With {.Name = "GlobalFormsReports", .Data = customTypes.GlobalFormsReports}
         }
         cboGlobals.ItemsSource = items
         cboGlobals.SelectedIndex = 0
