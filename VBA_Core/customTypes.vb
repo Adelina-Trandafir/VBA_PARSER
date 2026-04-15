@@ -371,7 +371,7 @@ Public Module customDesigner
         ''' </summary>
         Public Function ToJson(Optional indentLevel As Integer = 0) As String
             Dim sb As New StringBuilder()
-            Dim pad As String = New String(" "c, indentLevel * 2)
+            Dim pad As New String(" "c, indentLevel * 2)
 
             sb.AppendLine(pad & "{")
             sb.AppendLine($"{pad}  ""Name"": ""{EscapeJson(Name)}"",")
@@ -798,7 +798,7 @@ Public Module customDesigner
         Default Public ReadOnly Property Item(key As String) As String()
             Get
                 Dim prop = items.FirstOrDefault(Function(p) String.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase))
-                Return If(prop IsNot Nothing, prop.Values.ToArray(), Nothing)
+                Return prop?.Values.ToArray()
             End Get
         End Property
 
@@ -845,6 +845,17 @@ Public Module customTypes
         Public Property Type As String      ' "Form" / "Class" / "Module"
         Public Property CodeContent As String
         Public Property FilePath As String
+
+        Private _WorkingLines As MethodLineList
+        Public Property WorkingLines As MethodLineList
+            Get
+                Return _WorkingLines
+            End Get
+            Set(value As MethodLineList)
+                If value IsNot Nothing Then value.SetOwnerName(NameOf(WorkingLines))
+                _WorkingLines = value
+            End Set
+        End Property
 
         Private _Lines As MethodLineList
         Public Property Lines As MethodLineList
@@ -1024,6 +1035,39 @@ Public Module customTypes
 
             Return ("", "")
         End Function
+
+        ''' <summary>
+        ''' Intoarce doar liniile de cod care nu sunt tokenizate (WorkingLines).
+        ''' </summary>
+        ''' <returns></returns>
+        Public ReadOnly Property GetWorkingLines() As MethodLineList
+            Get
+                Dim working As New MethodLineList
+                If WorkingLines IsNot Nothing Then
+                    For Each line In WorkingLines.Where(Function(l) Not l.IsTokenized)
+                        working.Add(line)
+                    Next
+                End If
+                Return working
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' Returnează toate liniile de cod ne-tokenizate (WorkingLines) concatenate într-un singur String.
+        ''' </summary>
+        ''' <returns></returns>
+        Public ReadOnly Property GetAllWorkingLines() As String
+            Get
+                Dim allLines As New StringBuilder
+                If WorkingLines IsNot Nothing Then
+                    For Each line In WorkingLines.Where(Function(l) Not l.IsTokenized)
+                        allLines.AppendLine(line.Content)
+                    Next
+                End If
+
+                Return allLines.ToString
+            End Get
+        End Property
     End Class
 
     <Serializable>
@@ -1113,6 +1157,8 @@ Public Module customTypes
         Public Property IsDefault As Boolean
         Public Property IsEnumerable As Boolean
         Public Property IsAccessEventHandler As Boolean
+        Public Property IsFunction As Boolean
+
         Public Property HandlerObject As String
         Public Property HandlerEvent As String
         Public Property HandlerObjectType As String
@@ -1127,6 +1173,17 @@ Public Module customTypes
                 If value IsNot Nothing Then value.SetOwnerName(NameOf(MethodLines))
                 _MethodLines = value
                 LogInfo($"📘 MethodLines assigned for method '{Name}'", 3)
+            End Set
+        End Property
+
+        Private _WorkingLines As MethodLineList
+        Public Property WorkingLines As MethodLineList
+            Get
+                Return _WorkingLines
+            End Get
+            Set(value As MethodLineList)
+                If value IsNot Nothing Then value.SetOwnerName(NameOf(WorkingLines))
+                _WorkingLines = value
             End Set
         End Property
 
@@ -1189,12 +1246,44 @@ Public Module customTypes
                 LogInfo($"📘 CodeLabels assigned for method '{Name}'", 3)
             End Set
         End Property
+
+        ''' <summary>
+        ''' Intoarce doar liniile de cod care nu sunt tokenizate (WorkingLines).
+        ''' </summary>
+        ''' <returns></returns>
+        Public ReadOnly Property GetWorkingLines() As MethodLineList
+            Get
+                Dim working As New MethodLineList
+                If WorkingLines IsNot Nothing Then
+                    For Each line In WorkingLines.Where(Function(l) Not l.IsTokenized)
+                        working.Add(line)
+                    Next
+                End If
+                Return working
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' Returnează toate liniile de cod ne-tokenizate (WorkingLines) concatenate într-un singur String.
+        ''' </summary>
+        ''' <returns></returns>
+        Public ReadOnly Property GetAllWorkingLines() As String
+            Get
+                Dim allLines As New StringBuilder
+                If WorkingLines IsNot Nothing Then
+                    For Each line In WorkingLines.Where(Function(l) Not l.IsTokenized)
+                        allLines.AppendLine(line.Content)
+                    Next
+                End If
+
+                Return allLines.ToString
+            End Get
+        End Property
     End Class
 
     <Serializable>
     Public Class FunctionInfo
         Inherits MethodInfo
-        Public Property IsFunction As Boolean
         Public Property ReturnType As String
         Public Property ReturnObject As ParamInfo
     End Class
@@ -1217,7 +1306,6 @@ Public Module customTypes
         Public Property LocalLineNumber As Integer
         Public Property Content As String
         Public Property OriginalContent As String
-        Public Property _Tokens As TokenList
         Public Property IsTokenized As Boolean = False
 
         '------ ENUM METHOD BLOCK CONTEXT ------
@@ -1254,10 +1342,10 @@ Public Module customTypes
         Public Sub New()
             _Tokens = New TokenList()
         End Sub
-
+        Private Property _tokens As TokenList
         Public Property Tokens As TokenList
             Get
-                If _Tokens Is Nothing Then _Tokens = New List(Of Token)
+                If _tokens Is Nothing Then _tokens = New TokenList
                 Return _Tokens
             End Get
             Set(value As TokenList)
@@ -1266,6 +1354,21 @@ Public Module customTypes
                     LogInfo($"Warning: Token list reassigned at line {LineNumber}", 3)
                 End If
                 _Tokens = value
+            End Set
+        End Property
+
+        Private Property _preTokens As TokenList
+        Public Property PreTokens As TokenList
+            Get
+                If _preTokens Is Nothing Then _preTokens = New TokenList
+                Return _preTokens
+            End Get
+            Set(value As TokenList)
+                If Not Object.ReferenceEquals(_preTokens, value) Then
+                    ' doar loghează dacă cineva resetează lista complet
+                    LogInfo($"Warning: Token list reassigned at line {LineNumber}", 3)
+                End If
+                _preTokens = value
             End Set
         End Property
     End Class

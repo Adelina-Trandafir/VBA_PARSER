@@ -2,10 +2,11 @@
 'FILE DESCRIPTION: Module pentru tokenizarea codului VBA
 'PATH: VBA_TOKENIZER/modTokenization.vb
 
+Imports System.Text
 Imports System.Text.RegularExpressions
 Imports VBA_CORE
-Imports VBA_CORE.modAccessPropertyCatalog
 Imports VBA_CORE.customTypes
+Imports VBA_CORE.modAccessPropertyCatalog
 
 Public Module Tokenizer
     Private ReadOnly pCurrentType As New Threading.ThreadLocal(Of String)(Function() "")
@@ -72,6 +73,10 @@ Public Module Tokenizer
                     End If
                 Next
             End If
+
+            PrepareWorkingLines(modObj)
+            'PreParseTokens(modObj)
+            ResolveAccessEventHandlers(modObj)
 
             If modObj.Methods IsNot Nothing Then
                 LogInfoLocal($"Tokenizing {modObj.Methods.Count} methods in module: {pCurrentModule.Value} ({pCurrentType.Value})", 2)
@@ -146,6 +151,133 @@ Public Module Tokenizer
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Curăță liniile sursă și le pregătește pentru tokenizare.
+    ''' Elimină comentariile (dacă există deja filtrate) și înlocuiește toate
+    ''' stringurile (între ghilimele) cu markere de forma &lt;STR_start_len_end&gt;.
+    ''' Rezultatul este salvat în .WorkingLines pentru modul și pentru fiecare metodă.
+    ''' </summary>
+    ''' <param name="currentModule">Containerul modulului curent.</param>
+    Private Sub PrepareWorkingLines(ByRef currentModule As ModuleContainer)
+        Try
+            If currentModule.Lines Is Nothing OrElse currentModule.Lines.Count = 0 Then Exit Sub
+
+            ' === 1️⃣ Procesează codul la nivel de modul (în afara metodelor) ===
+            Dim processedLines As New MethodLineList
+            For Each line In currentModule.Lines.Where(Function(ln) Not ln.StartsMethodBlock AndAlso Not ln.IsMethodLine AndAlso Not ln.EndsMethodBlock)
+                Dim workingLine As New MethodLine
+                workingLine = line
+                workingLine.Content = ReplaceStringsWithMarkers(line.Content)
+                PreParseWorkingLine(workingLine, line)
+                processedLines.Add(workingLine)
+            Next
+            currentModule.WorkingLines = processedLines
+
+            ' === 2️⃣ Procesează fiecare metodă ===
+            For Each m In currentModule.Methods.Values
+                processedLines = New MethodLineList
+                If m.MethodLines Is Nothing OrElse m.MethodLines.Count = 0 Then Continue For
+
+                For Each line In m.MethodLines
+                    Dim workingLine As New MethodLine
+                    workingLine = line
+                    workingLine.Content = ReplaceStringsWithMarkers(line.Content)
+                    PreParseWorkingLine(workingLine, line)
+                    processedLines.Add(workingLine)
+                Next
+                m.WorkingLines = processedLines
+            Next
+
+        Catch ex As Exception
+            LogError("PrepareWorkingLines", ex)
+        End Try
+    End Sub
+
+    Friend Sub GetVariables(ByRef ln As MethodLine)
+
+    End Sub
+    ''' <summary>
+    ''' Înlocuiește toate stringurile dintre ghilimele cu markere de forma &lt;STR_start_len_end&gt;.
+    ''' Utilizează expresia regulată globală RxLineCleaner pentru performanță.
+    ''' </summary>
+    Private Function ReplaceStringsWithMarkers(line As String) As String
+        Return RegexCache.RxLineCleaner.Replace(line,
+        Function(m)
+            Dim startIdx As Integer = m.Index
+            Dim length As Integer = m.Length
+            Dim endIdx As Integer = startIdx + length - 1
+            Return $"<STR_{startIdx}_{length}_{endIdx}>"
+        End Function)
+    End Function
+
+    Friend Sub PreParseWorkingLine(ByRef wln As MethodLine, ln As MethodLine)
+        For Each m As Match In RegexCache.RxPreTokenizer.Matches(wln.Content)
+            If m.Success AndAlso Not String.IsNullOrWhiteSpace(m.Value) Then
+                Dim tok As New Token With {
+                                            .LineNumber = ln.LineNumber,
+                                            .LocalLineNumber = ln.LocalLineNumber,
+                                            .TokenString = m.Value.Trim(),
+                                            .SourceLine = ln,
+                                            .TokenType = TokenTypeEnum.initial
+                                            }
+                ln.PreTokens.Add(tok)
+            End If
+        Next
+    End Sub
+
+    '    Public Shared ReadOnly RxPreTokenizer As New Regex("(?>\<[^>]*\>)|(\s*[A-Za-z_]\w*(?:[.!][A-Za-z_]\w*)*(?:\s+As\s+[A-Za-z_]\w*)?)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    ''' <summary>
+    ''' Prelucreaza liniile pentru a extrage tokeni preliminari.
+    ''' </summary>
+    ''' <param name="currentModule"></param>
+    Friend Sub PreParseTokens(currentModule As ModuleContainer)
+        Dim tl As New TokenList
+
+        Try
+            For Each l In currentModule.WorkingLines.Where(Function(ln) Not ln.StartsMethodBlock AndAlso Not ln.IsMethodLine AndAlso Not ln.EndsMethodBlock)
+                For Each m As Match In RegexCache.RxPreTokenizer.Matches(l.Content)
+                    If m.Success AndAlso Not String.IsNullOrWhiteSpace(m.Value) Then
+                        Dim tok As New Token With {
+                                                    .LineNumber = l.LineNumber,
+                                                    .LocalLineNumber = l.LocalLineNumber,
+                                                    .TokenString = m.Value.Trim(),
+                                                    .SourceLine = l,
+                                                    .WithBlockDepth = l.WithBlockDepth,
+                                                    .TokenType = TokenTypeEnum.initial
+                                                    }
+                        tl.Add(tok)
+                    End If
+                Next
+                l.PreTokens = tl
+            Next
+        Catch ex As Exception
+            LogError("PreParseTokens", ex)
+        End Try
+
+        Try
+            For Each mtd In currentModule.Methods.Values '.SelectMany(Function(m) m.WorkingLines) '.Where(Function(ln) Not ln.IsTokenized)
+                tl = New TokenList
+                For Each ml In mtd.WorkingLines
+                    For Each m As Match In RegexCache.RxPreTokenizer.Matches(ml.Content)
+                        If m.Success AndAlso Not String.IsNullOrWhiteSpace(m.Value) Then
+                            Dim tok = New Token With {
+                                                    .LineNumber = ml.LineNumber,
+                                                    .LocalLineNumber = ml.LocalLineNumber,
+                                                    .TokenString = m.Value.Trim(),
+                                                    .SourceLine = ml,
+                                                    .WithBlockDepth = ml.WithBlockDepth,
+                                                    .TokenType = TokenTypeEnum.initial
+                                                    }
+                            tl.Add(tok)
+                        End If
+                    Next
+                    ml.PreTokens = tl
+                Next
+            Next
+        Catch ex As Exception
+            LogError("PreParseTokens.MethodLines", ex)
+        End Try
+    End Sub
 
     ' ==============================================================
     ' 🔹 Extrage tokeni dintr-o linie curățată
@@ -275,11 +407,11 @@ Public Module Tokenizer
                         If Not tok.NextSymbol.ToUpper.Contains("AS") Then
                             ResolveTokenScope(tok, currentMethod, currentModule)
 
-                            If Not tok.IsResolved Then
-                                If line.StartsMethodBlock AndAlso currentMethod IsNot Nothing Then
-                                    TokenizerResolves.ResolveAccessEventHandler(tok, currentMethod, currentModule)
-                                End If
-                            End If
+                            'If Not tok.IsResolved Then
+                            '    If line.StartsMethodBlock AndAlso currentMethod IsNot Nothing Then
+                            '        TokenizerResolves.ResolveAccessEventHandler(tok, currentMethod, currentModule)
+                            '    End If
+                            'End If
                         Else
                             asContextTarget = tok
                         End If
@@ -490,6 +622,82 @@ Public Module Tokenizer
 End Module
 
 Public Module TokenizerResolves
+    ''' <summary>
+    ''' Analizează toate metodele unui modul Form/Report și,
+    ''' pentru fiecare metodă declarativă ce corespunde unui eveniment din EventSets,
+    ''' marchează metoda ca handler de eveniment și generează un token asociat.
+    ''' </summary>
+    Friend Sub ResolveAccessEventHandlers(ByRef currentModule As FormReportContainer)
+        Try
+            If currentModule Is Nothing OrElse currentModule.EventSets Is Nothing OrElse currentModule.EventSets.Count = 0 Then Exit Sub
+            If currentModule.Methods Is Nothing OrElse currentModule.Methods.Count = 0 Then Exit Sub
+
+            For Each m In currentModule.Methods.Values
+                Dim declLine As MethodLine = m.MethodLines?.FirstOrDefault(Function(l) l.StartsMethodBlock)
+                If declLine Is Nothing Then Continue For
+
+                Dim methodName = m.Name
+                If String.IsNullOrEmpty(methodName) Then Continue For
+
+                Dim lastUnderscore As Integer = methodName.LastIndexOf("_"c)
+                If lastUnderscore <= 0 Then Continue For
+
+                Dim ctrlName As String = methodName.Substring(0, lastUnderscore)
+                Dim evtName As String = methodName.Substring(lastUnderscore + 1)
+
+                Dim matchKey = currentModule.EventSets.Keys.FirstOrDefault(Function(k) k.Equals(methodName, StringComparison.OrdinalIgnoreCase))
+                If String.IsNullOrEmpty(matchKey) Then Continue For
+
+                Dim match = currentModule.EventSets(matchKey)
+                If match Is Nothing Then Continue For
+
+                ' === referință la obiectul real ===
+                Dim resolvedObj As Object = Nothing
+                Select Case match.RefType
+                    Case "Control"
+                        resolvedObj = currentModule.Controls.FirstOrDefault(Function(c) c.Name.Equals(match.HandlerString, StringComparison.OrdinalIgnoreCase))
+                    Case "Section"
+                        resolvedObj = currentModule.Sections.FirstOrDefault(Function(s) s.Name.Equals(match.HandlerString, StringComparison.OrdinalIgnoreCase))
+                    Case "Form", "Report"
+                        resolvedObj = currentModule
+                End Select
+
+                ' === marchează metoda ===
+                m.IsAccessEventHandler = True
+                m.HandlerObject = match.HandlerString
+                m.MethodScope = "access_event"
+
+                ' === creează tokenul evenimentului ===
+                Dim evtTok As New Token With {
+                    .TokenString = methodName,
+                    .TokenType = TokenTypeEnum.access_event,
+                    .IsResolved = True,
+                    .ResolvedScope = $"{match.HandlerString}_event",
+                    .ResolvedRef = resolvedObj,
+                    .DataType = $"{match.RefType}.{match.EventName}",
+                    .LineNumber = declLine.LineNumber,
+                    .LocalLineNumber = declLine.LocalLineNumber,
+                    .SourceLine = declLine,
+                    .Context = m.Name
+                }
+
+                declLine.Tokens = New TokenList From {evtTok}
+                MapTokensToColumns(declLine.Tokens, declLine.OriginalContent, declLine.Content)
+
+                If m.Tokens Is Nothing Then m.Tokens = New TokenList()
+                m.Tokens.Add(declLine.Tokens.FirstOrDefault)
+
+                ' === marchează linia declarativă ===
+                declLine.IsTokenized = True
+
+                LogInfoLocal($"Access event matched: {methodName} → {match.RefType}.{match.EventName}", 2)
+            Next
+
+        Catch ex As Exception
+            LogError("ResolveAccessEventHandlers", ex)
+        End Try
+    End Sub
+
     Friend Sub ResolveAccessEventHandler(ByRef tok As Token, ByRef currentMethod As MethodInfo, ByRef currentModule As ModuleContainer)
         Try
             If tok Is Nothing OrElse currentMethod Is Nothing OrElse currentModule Is Nothing Then Exit Sub

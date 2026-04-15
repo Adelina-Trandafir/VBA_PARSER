@@ -534,6 +534,7 @@ Public Module modCodeParser
         Dim isPublic = False
         Dim fLib As String = ""
         Dim fAlias As String = ""
+        Dim isFunction As Boolean = False
 
         Try
             If h.Groups(1).Success Then isPublic = h.Groups(1).Value = "Public"
@@ -571,8 +572,8 @@ Public Module modCodeParser
             Next
 
             If kind.Equals("Function", StringComparison.OrdinalIgnoreCase) Then
+                isFunction = True
                 currentMethodInfo = New FunctionInfo With {
-                    .IsFunction = True,
                     .ReturnType = returnType,
                     .ReturnObject = Nothing
                 }
@@ -590,6 +591,7 @@ Public Module modCodeParser
                 .MethodScope = access.ToLowerInvariant()
                 .MethodLines = New MethodLineList
                 .Parameters = paramsRaw
+                .isfunction = isFunction
             End With
 
             For Each prm In paramsRaw

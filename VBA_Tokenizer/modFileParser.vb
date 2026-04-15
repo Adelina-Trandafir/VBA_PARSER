@@ -301,7 +301,7 @@ Module modFileParser
                         .RefType = fci.Type
                     }
 
-                    fci.EventSets.Add(Strings.Join({fci.DesignerContainer.Name, evt.EventName}, "_"), evt)
+                    fci.EventSets.Add(Strings.Join({fci.DesignerContainer.Name, IIf(prp.Key.StartsWith("On"), prp.Key.Substring(2), prp.Key)}, "_"), evt)
                 Next
             End If
 
@@ -334,7 +334,7 @@ Module modFileParser
                             .RefType = "Section",
                             .RefObject = sec
                         }
-                        fci.EventSets.Add(Strings.Join({sec.Name, evt.EventName}, "_"), evt)
+                        fci.EventSets.Add(Strings.Join({sec.Name, IIf(prp.Key.StartsWith("On"), prp.Key.Substring(2), prp.Key)}, "_"), evt)
                     Next
                 End If
 
@@ -367,7 +367,7 @@ Module modFileParser
                                 .RefType = "Control"
                             }
 
-                            fci.EventSets.Add(Strings.Join({ctrl.Name, evt.EventName}, "_"), evt)
+                            fci.EventSets.Add(Strings.Join({ctrl.Name, IIf(prp.Key.StartsWith("On"), prp.Key.Substring(2), prp.Key)}, "_"), evt)
                         Next
                     End If
 

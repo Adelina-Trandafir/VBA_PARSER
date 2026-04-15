@@ -15,6 +15,7 @@ Public Module modGlobals
         unresolved
         type_ref
         self
+        initial
 
         ' === 1️⃣ Declarații ===
         variable_decl

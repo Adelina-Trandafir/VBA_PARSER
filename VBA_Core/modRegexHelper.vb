@@ -45,7 +45,7 @@ Public Class RegexCache
 
     ' Tokenizer
     'Public Shared ReadOnly RxTokenizer As New Regex("([A-Za-z_]\w*)\s*(=|\(|\.|,|\+|\-|\*|\/|&|\)|\s+(?=[A-Za-z_]\w*)|$)(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.Compiled)
-    Public Shared ReadOnly RxTokenizer As New Regex("(\.?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(=|\(|,|\+|\-|\*|/|&|\)|As|\s+|$)(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Public Shared ReadOnly RxTokenizer As New Regex("(\.?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?!(?:[^<]*>))\s*(=|\(|,|\+|\-|\*|/|&|\)|As|\s+|$)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 
     ' Split dupa :
     Public Shared ReadOnly RxSplitColon As New Regex(":(?=(?:[^""]*""[^""]*"")*[^""]*$)", RegexOptions.Compiled)
@@ -105,4 +105,11 @@ Public Class RegexCache
 
     ' Designer
     Public Shared ReadOnly RxDesigner As New Regex("(""(?:[^""\\]|\\.)*""|(!=)|[^\s""]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled Or RegexOptions.Singleline)
+
+    ' Line cleaner (removing strings and comments)
+    Public Shared ReadOnly RxLineCleaner As New Regex("(""([^""\\]|\\.)*"")|('.*$)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    ' Pretokenizer
+    Public Shared ReadOnly RxPreTokenizer As New Regex("(?>\<[^>]*\>)|(\s*[A-Za-z_]\w*(?:[.!][A-Za-z_]\w*)*(?:\s+As\s+[A-Za-z_]\w*)?)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Public Shared ReadOnly RxAsBlock As New Regex("(?<asblock>\b(?<name>[A-Za-z_]\w*)\s+As\s+(?<datatype>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 End Class
