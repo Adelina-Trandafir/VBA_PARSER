@@ -43,6 +43,8 @@ Public Module Program
             CreateControlsFromFiles()
             ParseTextToObjects()
             TokenizeAllModules()
+            BuildDeclarationLinks()
+            BuildDependencyGraph()
             'CleanupWithReferences()
             ' Build relations
             'modSymbolResolutionRunner.RunFullSymbolResolution()

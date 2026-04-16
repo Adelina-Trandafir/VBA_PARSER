@@ -112,4 +112,14 @@ Public Class RegexCache
     ' Pretokenizer
     Public Shared ReadOnly RxPreTokenizer As New Regex("(?>\<[^>]*\>)|(\s*[A-Za-z_]\w*(?:[.!][A-Za-z_]\w*)*(?:\s+As\s+[A-Za-z_]\w*)?)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Public Shared ReadOnly RxAsBlock As New Regex("(?<asblock>\b(?<name>[A-Za-z_]\w*)\s+As\s+(?<datatype>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+
+    ' Expression scanner: extrage tokeni in ordine sursa (lanturi, operatori, markere STR, literali)
+    ' Ordinea grupurilor conteaza: str/num/hash au prioritate fata de chain/op
+    Public Shared ReadOnly RxExpressionScan As New Regex(
+        "(?<str><STR_\d+_\d+_\d+>)" &
+        "|(?<num>\b\d[\d.]*\b)" &
+        "|(?<hash>#[^#]+#)" &
+        "|(?<chain>\.?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)" &
+        "|(?<op><>|<=|>=|:=|[=+\-*/\\&^,!<>()])",
+        RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 End Class

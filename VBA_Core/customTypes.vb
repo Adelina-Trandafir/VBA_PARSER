@@ -996,6 +996,12 @@ Public Module customTypes
             End Set
         End Property
 
+        ' === Graf de dependinte cross-module ===
+        ''' <summary>Metodele din alte module apelate de acest modul. Format: "ModuleName:MethodName".</summary>
+        Public Property CallsTo As New HashSet(Of String)
+        ''' <summary>Metodele din alte module care apeleaza metode din acest modul. Format: "ModuleName:MethodName".</summary>
+        Public Property CalledBy As New HashSet(Of String)
+
         Public _EventSets As New CustomDict(Of String, EventSet)
         Public Property EventSets As CustomDict(Of String, EventSet)
             Get
@@ -1400,6 +1406,18 @@ Public Module customTypes
         Public Property IsBuiltIn As Boolean
         Public Property ResolvedScope As String ' "local", "global", "with_context", etc.
         Public Property AssignedFrom As Token
+
+        ' === Legaturi declaratie ↔ referinta ===
+        ''' <summary>Lista tokenilor care referencuiesc aceasta declaratie (populata de BuildDeclarationLinks).</summary>
+        Public Property References As New List(Of Token)
+        ''' <summary>Tokenul de declaratie corespunzator acestei utilizari (populat de BuildDeclarationLinks).</summary>
+        Public Property DeclarationToken As Token
+
+        ' === Legaturi secventiale per linie ===
+        ''' <summary>Urmatorul token din aceeasi linie sursa (in ordinea coloanelor).</summary>
+        Public Property NextInLine As Token
+        ''' <summary>Precedentul token din aceeasi linie sursa (in ordinea coloanelor).</summary>
+        Public Property PrevInLine As Token
 
         Public Overrides Function ToString() As String
             Dim props As New List(Of String)

@@ -204,6 +204,10 @@ Public Module modCodeParser
                     parsedLine.IsTokenized = True
 
                     ParseMethodDeclaration(L, MCI, currentMethodInfo, lineNumber, RegexCache.RxEvent, rawL, condBlock, localLineNum, 0)
+                    If currentMethodInfo Is Nothing Then
+                        LogInfoLocal(" Event parsing failed (regex mismatch): " & L, 2)
+                        Continue For
+                    End If
                     If MCI.Events Is Nothing Then MCI.Events = New CustomDict(Of String, MethodInfo)("Events")
                     MCI.Events.Add(currentMethodInfo.Name, currentMethodInfo)
                     Dim evt As New EventSet With {

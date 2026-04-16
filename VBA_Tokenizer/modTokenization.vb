@@ -76,7 +76,9 @@ Public Module Tokenizer
 
             PrepareWorkingLines(modObj)
             'PreParseTokens(modObj)
-            ResolveAccessEventHandlers(modObj)
+            If TypeOf modObj Is FormReportContainer Then
+                ResolveAccessEventHandlers(CType(modObj, FormReportContainer))
+            End If
 
             If modObj.Methods IsNot Nothing Then
                 LogInfoLocal($"Tokenizing {modObj.Methods.Count} methods in module: {pCurrentModule.Value} ({pCurrentType.Value})", 2)
@@ -137,7 +139,9 @@ Public Module Tokenizer
             End Sub
 
             If modGlobals.Global_UseParallel Then
-                Parallel.ForEach(modObj.Methods.Values, opts, methodAction)
+                If modObj.Methods IsNot Nothing Then
+                    Parallel.ForEach(modObj.Methods.Values, opts, methodAction)
+                End If
             Else
                 If modObj.Methods IsNot Nothing Then
                     For Each m In modObj.Methods.Values
@@ -174,6 +178,7 @@ Public Module Tokenizer
             currentModule.WorkingLines = processedLines
 
             ' === 2️⃣ Procesează fiecare metodă ===
+            If currentModule.Methods Is Nothing Then Exit Sub
             For Each m In currentModule.Methods.Values
                 processedLines = New MethodLineList
                 If m.MethodLines Is Nothing OrElse m.MethodLines.Count = 0 Then Continue For
@@ -280,14 +285,38 @@ Public Module Tokenizer
     End Sub
 
     ' ==============================================================
-    ' 🔹 Extrage tokeni dintr-o linie curățată
+    ' 🔹 Scaneaza o linie si returneaza partile ordonate dupa coloana
+    ' ==============================================================
+    Private Function ScanLineToOrderedParts(content As String) As List(Of (Value As String, Column As Integer, Kind As String))
+        Dim result As New List(Of (Value As String, Column As Integer, Kind As String))
+        For Each m As Match In RegexCache.RxExpressionScan.Matches(content)
+            Dim kind As String
+            If m.Groups("str").Success Then
+                kind = "str"
+            ElseIf m.Groups("num").Success Then
+                kind = "num"
+            ElseIf m.Groups("hash").Success Then
+                kind = "hash"
+            ElseIf m.Groups("chain").Success Then
+                kind = "chain"
+            ElseIf m.Groups("op").Success Then
+                kind = "op"
+            Else
+                Continue For
+            End If
+            result.Add((m.Value, m.Index, kind))
+        Next
+        Return result
+    End Function
+
+    ' ==============================================================
+    ' 🔹 Extrage tokeni dintr-o linie curatata (expression-aware)
     ' ==============================================================
     Private Function GetTokensFromLine(ByRef currentMethod As MethodInfo, ByRef currentModule As ModuleContainer, ByRef line As MethodLine, Optional methodContext As String = "") As TokenList
         Dim tokens As New TokenList
-        Dim prevOp As String = Nothing
-        Dim asContextTarget As Token = Nothing
+        Dim asContextTarget As Token = Nothing  ' tokenul de declaratie care asteapta tipul sau
+        Dim prevTok As Token = Nothing           ' ultimul token adaugat (pentru NextInLine/PrevInLine)
 
-        'If line.Content = "Private Sub Form_Load()" Then Stop
         If currentMethod IsNot Nothing Then
             pCurrentMethod.Value = currentMethod.Name
         Else
@@ -299,143 +328,210 @@ Public Module Tokenizer
             If String.IsNullOrWhiteSpace(cleanLine) Then Return tokens
 
             Dim withContext As MethodLine = If(line.IsInWithBlock, line.WithBlockContext, Nothing)
-            Dim startsWithDot As Boolean = False
+            Dim chainParent As Token = Nothing  ' parintele lantului curent (cross-expression)
+            Dim isConstDecl As Boolean = line.Content.TrimStart().StartsWith("Const ", StringComparison.OrdinalIgnoreCase)
 
-            For Each m As Match In RegexCache.RxTokenizer.Matches(cleanLine)
-                Dim fullExpression = m.Groups(1).Value
-                Dim op = m.Groups(2).Value
-                If String.IsNullOrWhiteSpace(fullExpression) Then Continue For
-                If Char.IsDigit(fullExpression(0)) Then Continue For
+            For Each part In ScanLineToOrderedParts(cleanLine)
 
-                Dim parts() As String = fullExpression.Split("."c)
-                startsWithDot = fullExpression.StartsWith(".")
-                If startsWithDot Then
-                    parts = parts.Where(Function(p) Not String.IsNullOrEmpty(p)).ToArray()
-                End If
+                Select Case part.Kind
+                    Case "str", "num", "hash"
+                        ' Literali: nu creeaza tokeni, reseteaza contextul de lant
+                        chainParent = Nothing
 
-                Dim chainParent As Token = Nothing
-
-                For i As Integer = 0 To parts.Length - 1
-                    Dim partName = parts(i).Replace("()", "").Trim()
-                    If partName = "" Then Continue For
-
-                    Dim tok As New Token With {
-                            .LineNumber = line.LineNumber,
-                            .LocalLineNumber = line.LocalLineNumber,
-                            .MethodLineNumber = i + 1,
-                            .TokenString = partName,
-                            .NextSymbol = If(i < parts.Length - 1, ".", op),
-                            .Context = methodContext,
-                            .SourceLine = line,
-                            .WithBlockDepth = line.WithBlockDepth,
-                            .TokenType = TokenTypeEnum.unresolved
-                        }
-
-                    LogInfoLocal($"Identified token: '{tok.TokenString}' (next: '{tok.NextSymbol}')", 3)
-
-                    ' === context "As" activ (următorul token e tipul declarat)
-                    If asContextTarget IsNot Nothing Then
-                        asContextTarget.DataType = tok.TokenString
-                        asContextTarget.TokenType = TokenTypeEnum.type_ref
-                        asContextTarget = Nothing
-                        tok.TokenType = TokenTypeEnum.unresolved
-                    End If
-
-                    ' === clasificare built-in / Access / keyword ===
-                    Dim category = modIgnoreLists.GetIgnoreCategory(partName)
-                    Select Case category
-                        Case "VBA Type" : tok.TokenType = TokenTypeEnum.builtin_type : tok.IsBuiltIn = True
-                        Case "VBA Function" : tok.TokenType = TokenTypeEnum.builtin_function : tok.IsBuiltIn = True
-                        Case "VBA Object" : tok.TokenType = TokenTypeEnum.builtin_object : tok.IsBuiltIn = True
-                        Case "VBA Constant" : tok.TokenType = TokenTypeEnum.builtin_constant : tok.IsBuiltIn = True
-                        Case "Access Object" : tok.TokenType = TokenTypeEnum.access_object : tok.IsBuiltIn = True
-                        Case "Access Function" : tok.TokenType = TokenTypeEnum.access_function : tok.IsBuiltIn = True
-                        Case "VBA Keyword" : tok.TokenType = TokenTypeEnum.vba_keyword : tok.IsBuiltIn = True
-                        Case Else : tok.TokenType = TokenTypeEnum.unresolved
-                    End Select
-
-                    ' === declarații Dim / Const ===
-                    If line.IsDeclarationLine AndAlso tok.TokenType = TokenTypeEnum.unresolved Then
-                        Dim isConstDecl = line.Content.TrimStart().StartsWith("Const ", StringComparison.OrdinalIgnoreCase)
-                        If tok.NextSymbol.Equals("As", StringComparison.OrdinalIgnoreCase) Then
-                            tok.TokenType = If(isConstDecl, TokenTypeEnum.constant_decl, TokenTypeEnum.variable_decl)
-                            tok.ResolvedScope = If(currentMethod Is Nothing, "module_decl", "local_decl")
-                            tok.IsResolved = True
-                            tok.DataType = ""
-                            asContextTarget = tok
-                        ElseIf tok.NextSymbol = "," OrElse tok.NextSymbol = "" Then
-                            tok.TokenType = If(isConstDecl, TokenTypeEnum.constant_decl, TokenTypeEnum.variable_decl)
-                            tok.ResolvedScope = If(currentMethod Is Nothing, "module_decl", "local_decl")
-                            tok.IsResolved = False
-                            tok.DataType = "Variant"
+                    Case "op"
+                        ' Operator: seteaza NextSymbol pe ultimul token si reseteaza lantul
+                        Dim opVal As String = part.Value.Trim()
+                        If prevTok IsNot Nothing AndAlso String.IsNullOrEmpty(prevTok.NextSymbol) Then
+                            prevTok.NextSymbol = opVal
                         End If
-                        LogInfoLocal($"Declaration token: '{tok.TokenString}' as '{tok.TokenType}'", 3)
-                    End If
+                        ' "." este capturat in grupul "chain" impreuna cu identifier-ul, nu separat
+                        ' Orice alt operator rupe lantul (exceptie: paranteze sunt parte din apel)
+                        If opVal <> "." Then chainParent = Nothing
 
-                    ' === token special "Me" ===
-                    If tok.TokenString.Equals("Me", StringComparison.OrdinalIgnoreCase) Then
-                        tok.TokenType = TokenTypeEnum.self
-                        tok.IsBuiltIn = currentModule.Type <> "Class"
-                    End If
+                    Case "chain"
+                        Dim fullExpression As String = part.Value
+                        Dim chainStartCol As Integer = part.Column
+                        Dim startsWithDot As Boolean = fullExpression.StartsWith(".")
 
-                    If withContext IsNot Nothing AndAlso startsWithDot Then
-                        tok.IsWithMember = True
-                        tok.WithBlockContext = withContext
-                        tok.ResolvedScope = "with_context"
-                        tok.TokenType = TokenTypeEnum.variable_member
-                        tok.QualifiedName = BuildQualifiedWithName(withContext, tok)
-                        ResolveMemberFromContext(tok, withContext, currentModule)
-                    End If
-
-                    If chainParent IsNot Nothing Then
-                        tok.Parent = chainParent
-                        ResolveMemberFromContext(tok, chainParent, currentModule)
-                    End If
-
-                    If tok.IsResolved Then
-                        tokens.Add(tok)
-                        chainParent = tok
-                        Continue For
-                    End If
-
-                    ' === tokeni rezolvabili ===
-                    If Not tok.IsBuiltIn Then
-                        tok.IsResolved = False
-                        tokens.Add(tok)
-                        chainParent = tok
-
-                        If Not tok.NextSymbol.ToUpper.Contains("AS") Then
-                            ResolveTokenScope(tok, currentMethod, currentModule)
-
-                            'If Not tok.IsResolved Then
-                            '    If line.StartsMethodBlock AndAlso currentMethod IsNot Nothing Then
-                            '        TokenizerResolves.ResolveAccessEventHandler(tok, currentMethod, currentModule)
-                            '    End If
-                            'End If
-                        Else
-                            asContextTarget = tok
+                        ' Descompune lantul in parti individuale
+                        Dim chainParts() As String = fullExpression.Split("."c)
+                        If startsWithDot Then
+                            chainParts = chainParts.Where(Function(p) Not String.IsNullOrEmpty(p)).ToArray()
                         End If
 
-                        LogInfoLocal($"Resolved token: '{tok.TokenString}' as '{tok.TokenType}' (scope: '{tok.ResolvedScope}')", 3)
-                    Else
-                        tok.IsResolved = True
-                        tokens.Add(tok)
+                        ' Parintele local al lantului: pentru ".prop" continuam cu chainParent,
+                        ' pentru "obj.prop" incepem un nou lant
+                        Dim localChainParent As Token = If(startsWithDot, chainParent, Nothing)
 
-                        If tok.TokenType <> TokenTypeEnum.vba_keyword AndAlso tok.TokenType <> TokenTypeEnum.builtin_constant Then chainParent = tok
-                    End If
-                Next
+                        ' Offset in sir pentru calculul coloanei fiecarui sub-token
+                        Dim offsetInChain As Integer = If(startsWithDot, 1, 0)
 
-                prevOp = op
+                        ' === context "As" activ: intregul lant este tipul declaratiei (ex: "DAO.Recordset") ===
+                        If asContextTarget IsNot Nothing Then
+                            ' Seteaza DataType-ul cu intregul lant calificat
+                            asContextTarget.DataType = fullExpression.TrimStart("."c)
+                            asContextTarget = Nothing
+                            ' Creeaza tokeni de tip type_ref pentru toate partile lantului
+                            Dim tOffsetInChain As Integer = offsetInChain
+                            For i As Integer = 0 To chainParts.Length - 1
+                                Dim partName As String = chainParts(i).Replace("()", "").Trim()
+                                If String.IsNullOrEmpty(partName) Then
+                                    tOffsetInChain += chainParts(i).Length + 1
+                                    Continue For
+                                End If
+                                Dim catType2 = modIgnoreLists.GetIgnoreCategory(partName)
+                                Dim tTypeTok As New Token With {
+                                    .LineNumber = line.LineNumber,
+                                    .LocalLineNumber = line.LocalLineNumber,
+                                    .MethodLineNumber = line.LocalLineNumber,
+                                    .TokenString = partName,
+                                    .NextSymbol = If(i < chainParts.Length - 1, ".", ""),
+                                    .Context = If(Not String.IsNullOrEmpty(methodContext), methodContext, currentMethod?.Name),
+                                    .SourceLine = line,
+                                    .TokenType = If(catType2 = "VBA Type", TokenTypeEnum.builtin_type, TokenTypeEnum.type_ref),
+                                    .IsBuiltIn = (catType2 = "VBA Type"),
+                                    .IsResolved = True,
+                                    .ColumnNumber = chainStartCol + tOffsetInChain + 1,
+                                    .LocalColumnNumber = chainStartCol + tOffsetInChain + 1,
+                                    .MethodColumnNumber = chainStartCol + tOffsetInChain + 1
+                                }
+                                tOffsetInChain += partName.Length + 1
+                                If prevTok IsNot Nothing Then prevTok.NextInLine = tTypeTok : tTypeTok.PrevInLine = prevTok
+                                prevTok = tTypeTok
+                                tokens.Add(tTypeTok)
+                                localChainParent = tTypeTok
+                            Next
+                            If tokens.Count > 0 Then chainParent = tokens.Last()
+                            Continue For  ' treci la urmatoarea parte din ScanLineToOrderedParts
+                        End If
+
+                        For i As Integer = 0 To chainParts.Length - 1
+                            Dim partName As String = chainParts(i).Replace("()", "").Trim()
+                            If String.IsNullOrEmpty(partName) Then
+                                offsetInChain += chainParts(i).Length + 1
+                                Continue For
+                            End If
+
+                            Dim tok As New Token With {
+                                .LineNumber = line.LineNumber,
+                                .LocalLineNumber = line.LocalLineNumber,
+                                .MethodLineNumber = line.LocalLineNumber,
+                                .TokenString = partName,
+                                .NextSymbol = If(i < chainParts.Length - 1, ".", ""),
+                                .Context = If(Not String.IsNullOrEmpty(methodContext), methodContext, currentMethod?.Name),
+                                .SourceLine = line,
+                                .WithBlockDepth = line.WithBlockDepth,
+                                .TokenType = TokenTypeEnum.unresolved,
+                                .ColumnNumber = chainStartCol + offsetInChain + 1,     ' 1-indexed, relativ la working line
+                                .LocalColumnNumber = chainStartCol + offsetInChain + 1, ' acelasi - relativ la linia curata
+                                .MethodColumnNumber = chainStartCol + offsetInChain + 1
+                            }
+                            offsetInChain += partName.Length + 1  ' avans pentru urmatorul dot+part
+
+                            LogInfoLocal($"Identified token: '{tok.TokenString}' col={tok.ColumnNumber}", 3)
+
+                            ' === clasificare built-in / Access / keyword ===
+                            Dim category As String = modIgnoreLists.GetIgnoreCategory(partName)
+                            Select Case category
+                                Case "VBA Type"
+                                    tok.TokenType = TokenTypeEnum.builtin_type
+                                    tok.IsBuiltIn = True
+                                Case "VBA Function"
+                                    tok.TokenType = TokenTypeEnum.builtin_function
+                                    tok.IsBuiltIn = True
+                                Case "VBA Object"
+                                    tok.TokenType = TokenTypeEnum.builtin_object
+                                    tok.IsBuiltIn = True
+                                Case "VBA Constant"
+                                    tok.TokenType = TokenTypeEnum.builtin_constant
+                                    tok.IsBuiltIn = True
+                                Case "Access Object"
+                                    tok.TokenType = TokenTypeEnum.access_object
+                                    tok.IsBuiltIn = True
+                                Case "Access Function"
+                                    tok.TokenType = TokenTypeEnum.access_function
+                                    tok.IsBuiltIn = True
+                                Case "VBA Keyword"
+                                    tok.TokenType = TokenTypeEnum.vba_keyword
+                                    tok.IsBuiltIn = True
+                                    ' Keyword "As" activeaza contextul de tip pentru tokenul precedent
+                                    If partName.Equals("As", StringComparison.OrdinalIgnoreCase) Then
+                                        asContextTarget = prevTok  ' prev token va primi DataType-ul
+                                    End If
+                                Case Else
+                                    tok.TokenType = TokenTypeEnum.unresolved
+                            End Select
+
+                            ' === declaratii Dim / Const / Private / Public ===
+                            ' asContextTarget se seteaza cand se vede keyword-ul "As", nu aici
+                            If line.IsDeclarationLine AndAlso tok.TokenType = TokenTypeEnum.unresolved Then
+                                tok.TokenType = If(isConstDecl, TokenTypeEnum.constant_decl, TokenTypeEnum.variable_decl)
+                                tok.ResolvedScope = If(currentMethod Is Nothing, "module_decl", "local_decl")
+                                tok.IsResolved = True
+                                tok.DataType = ""  ' va fi setat cand vedem "As TypeName"
+                                LogInfoLocal($"Declaration token: '{tok.TokenString}' as '{tok.TokenType}'", 3)
+                            End If
+
+                            ' === token special "Me" ===
+                            If partName.Equals("Me", StringComparison.OrdinalIgnoreCase) Then
+                                tok.TokenType = TokenTypeEnum.self
+                                tok.IsBuiltIn = currentModule.Type <> "Class"
+                                tok.IsResolved = True
+                                tok.ResolvedRef = currentModule
+                            End If
+
+                            ' === With block members (lant inceput cu ".") ===
+                            If withContext IsNot Nothing AndAlso startsWithDot Then
+                                tok.IsWithMember = True
+                                tok.WithBlockContext = withContext
+                                tok.ResolvedScope = "with_context"
+                                tok.TokenType = TokenTypeEnum.variable_member
+                                tok.QualifiedName = BuildQualifiedWithName(withContext, tok)
+                                ResolveMemberFromContext(tok, withContext, currentModule)
+                            End If
+
+                            ' === chain parent linking ===
+                            If localChainParent IsNot Nothing Then
+                                tok.Parent = localChainParent
+                                ResolveMemberFromContext(tok, localChainParent, currentModule)
+                            End If
+
+                            ' === scope resolution pentru tokeni nerezolvati ===
+                            If Not tok.IsResolved AndAlso Not tok.IsBuiltIn Then
+                                ResolveTokenScope(tok, currentMethod, currentModule)
+                            ElseIf tok.IsBuiltIn Then
+                                tok.IsResolved = True
+                            End If
+
+                            LogInfoLocal($"Resolved token: '{tok.TokenString}' as '{tok.TokenType}' (scope: '{tok.ResolvedScope}')", 3)
+
+                            ' === Link secvential NextInLine/PrevInLine ===
+                            If prevTok IsNot Nothing Then
+                                prevTok.NextInLine = tok
+                                tok.PrevInLine = prevTok
+                            End If
+                            prevTok = tok
+
+                            tokens.Add(tok)
+                            localChainParent = tok
+                        Next
+
+                        ' Ultimul token din lant devine chainParent pentru posibila continuare cu "."
+                        If tokens.Count > 0 Then chainParent = tokens.Last()
+                End Select
             Next
 
-            ' === mapare poziții + rezoluție recursivă ===
-            'If line.Tokens Is Nothing Then line.Tokens = New List(Of Token)
-            'line.Tokens.AddRange(tokens)
-            MapTokensToColumns(tokens, line.OriginalContent, cleanLine)
-
+            ' === rezolutie recursiva pentru tokeni inca unresolved ===
             For Each tok In tokens
                 If tok.TokenType = TokenTypeEnum.unresolved AndAlso Not tok.IsBuiltIn Then
                     ResolveTokenRecursive(tok, currentMethod, currentModule)
+                End If
+            Next
+
+            ' === rezolutie cross-module pentru ce a ramas unresolved fara parinte ===
+            For Each tok In tokens
+                If tok.TokenType = TokenTypeEnum.unresolved AndAlso Not tok.IsBuiltIn AndAlso tok.Parent Is Nothing Then
+                    ResolveTokenCrossModule(tok)
                 End If
             Next
 
@@ -443,7 +539,7 @@ Public Module Tokenizer
 
         Catch ex As Exception
             LogError("GetTokensFromLine", ex)
-            Return New List(Of Token)
+            Return New TokenList
         End Try
     End Function
 
@@ -911,12 +1007,24 @@ Public Module TokenizerResolves
             ' === 2️⃣ Funcții definite în modul ===
             If currentModule?.Functions?.ContainsKey(tok.TokenString) Then
                 Dim f = currentModule.Functions(tok.TokenString)
-                tok.TokenType = TokenTypeEnum.Function
+                tok.TokenType = TokenTypeEnum.[Function]
                 tok.DataType = f.ReturnType
                 tok.ResolvedScope = "function"
                 tok.IsResolved = True
                 tok.ResolvedRef = f
                 LogInfoLocal($"Resolved module function: '{tok.TokenString}'", 3)
+                Exit Sub
+            End If
+
+            ' === 2b️⃣ Sub-uri definite în modul ===
+            If currentModule?.Methods?.ContainsKey(tok.TokenString) Then
+                Dim mth = currentModule.Methods(tok.TokenString)
+                tok.TokenType = TokenTypeEnum.[sub]
+                tok.DataType = ""
+                tok.ResolvedScope = "method"
+                tok.IsResolved = True
+                tok.ResolvedRef = mth
+                LogInfoLocal($"Resolved module sub: '{tok.TokenString}'", 3)
                 Exit Sub
             End If
 
@@ -1304,4 +1412,275 @@ Public Module TokenizerResolves
 
         Return current
     End Function
+
+    ' ==============================================================
+    ' 🔹 Rezolutie cross-module: cauta tokenul in toate modulele globale
+    ' ==============================================================
+    Friend Sub ResolveTokenCrossModule(ByRef tok As Token)
+        Try
+            If tok Is Nothing OrElse tok.IsResolved OrElse tok.IsBuiltIn Then Exit Sub
+            Dim name As String = tok.TokenString
+            If String.IsNullOrEmpty(name) Then Exit Sub
+
+            For Each modPair In GlobalModules
+                Dim m As ModuleContainer = modPair.Value
+                If m Is Nothing Then Continue For
+
+                If m.Functions?.ContainsKey(name) Then
+                    Dim f = m.Functions(name)
+                    tok.TokenType = TokenTypeEnum.[Function]
+                    tok.DataType = f.ReturnType
+                    tok.ResolvedScope = "global"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = f
+                    LogInfoLocal($"Cross-module resolved function: '{name}' in module '{m.Name}'", 3)
+                    Exit Sub
+                End If
+
+                If m.Methods?.ContainsKey(name) Then
+                    Dim mth = m.Methods(name)
+                    tok.TokenType = TokenTypeEnum.[sub]
+                    tok.DataType = ""
+                    tok.ResolvedScope = "global"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = mth
+                    LogInfoLocal($"Cross-module resolved sub: '{name}' in module '{m.Name}'", 3)
+                    Exit Sub
+                End If
+
+                If m.Properties?.ContainsKey(name) Then
+                    Dim p = m.Properties(name)
+                    tok.TokenType = TokenTypeEnum.property_get
+                    tok.DataType = p.ReturnType
+                    tok.ResolvedScope = "global"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = p
+                    LogInfoLocal($"Cross-module resolved property: '{name}' in module '{m.Name}'", 3)
+                    Exit Sub
+                End If
+
+                ' Variabile publice de modul
+                Dim vMod = m.Variables?.FirstOrDefault(Function(v) v.IsPublic AndAlso v.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                If vMod IsNot Nothing Then
+                    tok.TokenType = TokenTypeEnum.variable
+                    tok.DataType = vMod.Type
+                    tok.ResolvedScope = "global_var"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = vMod
+                    LogInfoLocal($"Cross-module resolved public variable: '{name}' in module '{m.Name}'", 3)
+                    Exit Sub
+                End If
+
+                ' Constante publice de modul
+                Dim cMod = m.Constants?.FirstOrDefault(Function(c) c.IsPublic AndAlso c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                If cMod IsNot Nothing Then
+                    tok.TokenType = TokenTypeEnum.constant
+                    tok.DataType = cMod.Type
+                    tok.ResolvedScope = "global_const"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = cMod
+                    LogInfoLocal($"Cross-module resolved public constant: '{name}' in module '{m.Name}'", 3)
+                    Exit Sub
+                End If
+            Next
+
+            ' Cauta si in formulare/rapoarte
+            For Each modPair In GlobalFormsReports
+                Dim m As FormReportContainer = modPair.Value
+                If m Is Nothing Then Continue For
+
+                If m.Functions?.ContainsKey(name) Then
+                    Dim f = m.Functions(name)
+                    tok.TokenType = TokenTypeEnum.[Function]
+                    tok.DataType = f.ReturnType
+                    tok.ResolvedScope = "global_form"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = f
+                    LogInfoLocal($"Cross-module resolved function from form: '{name}' in '{m.Name}'", 3)
+                    Exit Sub
+                End If
+
+                If m.Methods?.ContainsKey(name) Then
+                    Dim mth = m.Methods(name)
+                    tok.TokenType = TokenTypeEnum.[sub]
+                    tok.DataType = ""
+                    tok.ResolvedScope = "global_form"
+                    tok.IsResolved = True
+                    tok.ResolvedRef = mth
+                    LogInfoLocal($"Cross-module resolved sub from form: '{name}' in '{m.Name}'", 3)
+                    Exit Sub
+                End If
+            Next
+
+        Catch ex As Exception
+            LogError("ResolveTokenCrossModule", ex)
+        End Try
+    End Sub
+
+    ' ==============================================================
+    ' 🔹 Faza 4: Construieste legaturile declaratie ↔ referinta
+    ' ==============================================================
+    Public Sub BuildDeclarationLinks()
+        Try
+            LogInfo("[TOKENIZER] Building declaration-reference links...", 1, True)
+            Dim linkedCount As Integer = 0
+
+            Dim processModule As Action(Of ModuleContainer) =
+            Sub(modObj As ModuleContainer)
+                If modObj Is Nothing OrElse modObj.Methods Is Nothing Then Exit Sub
+                For Each m In modObj.Methods.Values
+                    If m Is Nothing OrElse m.Tokens Is Nothing Then Continue For
+                    For Each tok In m.Tokens
+                        If tok Is Nothing OrElse Not tok.IsResolved OrElse tok.ResolvedRef Is Nothing Then Continue For
+                        ' Sari peste declaratii (ele sunt sursa, nu referinta)
+                        If tok.TokenType = TokenTypeEnum.variable_decl OrElse
+                           tok.TokenType = TokenTypeEnum.constant_decl OrElse
+                           tok.TokenType = TokenTypeEnum.parameter_decl OrElse
+                           tok.TokenType = TokenTypeEnum.function_decl OrElse
+                           tok.TokenType = TokenTypeEnum.sub_decl OrElse
+                           tok.TokenType = TokenTypeEnum.property_get_decl OrElse
+                           tok.TokenType = TokenTypeEnum.property_let_decl OrElse
+                           tok.TokenType = TokenTypeEnum.property_set_decl Then
+                            Continue For
+                        End If
+
+                        Try
+                            ' === Referinta la ParamInfo (variabila/parametru/constanta) ===
+                            Dim pi = TryCast(tok.ResolvedRef, ParamInfo)
+                            If pi IsNot Nothing AndAlso pi.Tokens IsNot Nothing AndAlso pi.Tokens.Count > 0 Then
+                                Dim declTok = pi.Tokens(0)
+                                If declTok IsNot Nothing Then
+                                    SyncLock declTok.References
+                                        If Not declTok.References.Contains(tok) Then
+                                            declTok.References.Add(tok)
+                                        End If
+                                    End SyncLock
+                                    tok.DeclarationToken = declTok
+                                    linkedCount += 1
+                                End If
+                            End If
+
+                            ' === Referinta la MethodInfo (functie/sub) ===
+                            Dim mi = TryCast(tok.ResolvedRef, MethodInfo)
+                            If mi IsNot Nothing AndAlso mi.Tokens IsNot Nothing Then
+                                Dim declTok = mi.Tokens.FirstOrDefault(Function(t) t.TokenType = TokenTypeEnum.function_decl OrElse
+                                                                                    t.TokenType = TokenTypeEnum.sub_decl OrElse
+                                                                                    t.TokenType = TokenTypeEnum.property_get_decl OrElse
+                                                                                    t.TokenType = TokenTypeEnum.property_let_decl OrElse
+                                                                                    t.TokenType = TokenTypeEnum.property_set_decl)
+                                If declTok IsNot Nothing Then
+                                    SyncLock declTok.References
+                                        If Not declTok.References.Contains(tok) Then
+                                            declTok.References.Add(tok)
+                                        End If
+                                    End SyncLock
+                                    tok.DeclarationToken = declTok
+                                    linkedCount += 1
+                                End If
+                            End If
+                        Catch ex As Exception
+                            LogError("BuildDeclarationLinks.Token", ex)
+                        End Try
+                    Next
+                Next
+            End Sub
+
+            For Each modPair In GlobalModules
+                processModule(modPair.Value)
+            Next
+            For Each modPair In GlobalFormsReports
+                processModule(modPair.Value)
+            Next
+
+            LogInfo($"[TOKENIZER] Declaration links built: {linkedCount} links.", 1, True)
+
+        Catch ex As Exception
+            LogError("BuildDeclarationLinks", ex)
+        End Try
+    End Sub
+
+    ' ==============================================================
+    ' 🔹 Faza 6: Construieste graful de dependinte cross-module
+    ' ==============================================================
+    Public Sub BuildDependencyGraph()
+        Try
+            LogInfo("[TOKENIZER] Building cross-module dependency graph...", 1, True)
+            Dim edgeCount As Integer = 0
+
+            ' Index invers: MethodInfo → modulul care o contine
+            Dim methodToModule As New Dictionary(Of MethodInfo, ModuleContainer)
+            For Each modPair In GlobalModules
+                Dim m = modPair.Value
+                If m.Methods IsNot Nothing Then
+                    For Each mth In m.Methods.Values
+                        If Not methodToModule.ContainsKey(mth) Then methodToModule(mth) = m
+                    Next
+                End If
+                If m.Functions IsNot Nothing Then
+                    For Each mth In m.Functions.Values
+                        If TypeOf mth Is MethodInfo AndAlso Not methodToModule.ContainsKey(CType(mth, MethodInfo)) Then
+                            methodToModule(CType(mth, MethodInfo)) = m
+                        End If
+                    Next
+                End If
+            Next
+            For Each modPair In GlobalFormsReports
+                Dim m = modPair.Value
+                If m.Methods IsNot Nothing Then
+                    For Each mth In m.Methods.Values
+                        If Not methodToModule.ContainsKey(mth) Then methodToModule(mth) = m
+                    Next
+                End If
+            Next
+
+            Dim processModule As Action(Of ModuleContainer) =
+            Sub(srcMod As ModuleContainer)
+                If srcMod Is Nothing OrElse srcMod.Methods Is Nothing Then Exit Sub
+                For Each srcMethod In srcMod.Methods.Values
+                    If srcMethod Is Nothing OrElse srcMethod.Tokens Is Nothing Then Continue For
+                    For Each tok In srcMethod.Tokens
+                        If tok Is Nothing OrElse Not tok.IsResolved OrElse tok.ResolvedScope <> "global" Then Continue For
+                        If tok.TokenType <> TokenTypeEnum.[Function] AndAlso
+                           tok.TokenType <> TokenTypeEnum.[sub] AndAlso
+                           tok.TokenType <> TokenTypeEnum.property_get AndAlso
+                           tok.TokenType <> TokenTypeEnum.property_let AndAlso
+                           tok.TokenType <> TokenTypeEnum.property_set Then Continue For
+
+                        Dim mi = TryCast(tok.ResolvedRef, MethodInfo)
+                        If mi Is Nothing Then Continue For
+
+                        Dim targetMod As ModuleContainer = Nothing
+                        If methodToModule.TryGetValue(mi, targetMod) AndAlso
+                           targetMod IsNot Nothing AndAlso
+                           Not Object.ReferenceEquals(targetMod, srcMod) Then
+
+                            Dim edge = $"{targetMod.Name}:{mi.Name}"
+                            Dim reverseEdge = $"{srcMod.Name}:{srcMethod.Name}"
+
+                            SyncLock srcMod.CallsTo
+                                srcMod.CallsTo.Add(edge)
+                            End SyncLock
+                            SyncLock targetMod.CalledBy
+                                targetMod.CalledBy.Add(reverseEdge)
+                            End SyncLock
+                            edgeCount += 1
+                        End If
+                    Next
+                Next
+            End Sub
+
+            For Each modPair In GlobalModules
+                processModule(modPair.Value)
+            Next
+            For Each modPair In GlobalFormsReports
+                processModule(modPair.Value)
+            Next
+
+            LogInfo($"[TOKENIZER] Dependency graph built: {edgeCount} edges.", 1, True)
+
+        Catch ex As Exception
+            LogError("BuildDependencyGraph", ex)
+        End Try
+    End Sub
+
 End Module
