@@ -249,7 +249,7 @@ Public Module DebugExtensionsV3
                 ' 🔹 Ignoră NULL sau string gol
                 If value Is Nothing Then Continue For
                 If TypeOf value Is String AndAlso String.IsNullOrEmpty(DirectCast(value, String)) Then Continue For
-                If TypeOf value Is Boolean AndAlso value = False Then Continue For
+                If TypeOf value Is Boolean AndAlso DirectCast(value, Boolean) = False Then Continue For
 
                 ' simplificăm pentru valori null sau primitive
                 Dim valStr As String

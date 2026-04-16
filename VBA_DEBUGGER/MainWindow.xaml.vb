@@ -33,8 +33,8 @@ Class MainWindow
 
     Private Sub LoadGlobalCollections()
         Dim items As New List(Of GlobalItem) From {
-            New GlobalItem With {.Name = "GlobalModules", .Data = customTypes.GlobalModules},
-            New GlobalItem With {.Name = "GlobalFormsReports", .Data = customTypes.GlobalFormsReports}
+            New GlobalItem With {.Name = "GlobalModules", .Data = modContainers.GlobalModules},
+            New GlobalItem With {.Name = "GlobalFormsReports", .Data = modContainers.GlobalFormsReports}
         }
         cboGlobals.ItemsSource = items
         cboGlobals.SelectedIndex = 0

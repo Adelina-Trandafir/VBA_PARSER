@@ -585,7 +585,14 @@ Public Module customDesigner
 
                 If matchFound Then
                     ' asigură-te că treci String(), nu List(Of String)
-                    Dim arr As String() = If(TypeOf kvp.Values Is List(Of String), DirectCast(kvp.Values, List(Of String)).ToArray(), kvp.Values)
+                    Dim arr As String()
+
+                    If TypeOf kvp.Values Is List(Of String) Then
+                        arr = kvp.Values.ToArray()
+                    Else
+                        arr = CType(CType(kvp.Values, Object), String())
+                    End If
+
                     result.Add(kvp.Key, arr)
                 End If
             Next
@@ -1558,9 +1565,15 @@ Public Module modClassFunctions
 
     Public Function TryGetFormReportDesigner(key As String) As FormReportDesigner
         Dim obj As Object = Nothing
-        If GlobalDesigners.TryGetValue(key, obj) Then
-            Return TryCast(obj, FormReportDesigner)
-        End If
-        Return Nothing
+        Try
+            If GlobalDesigners.TryGetValue(key, CType(obj, FormReportDesigner)) Then
+                Return TryCast(obj, FormReportDesigner)
+            End If
+            Return Nothing
+
+        Catch ex As Exception
+            Debugger.Log(0, "Error", $"Error retrieving FormReportDesigner for key '{key}': {ex.Message}")
+            Return Nothing
+        End Try
     End Function
 End Module
